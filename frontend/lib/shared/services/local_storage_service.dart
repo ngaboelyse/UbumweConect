@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -15,7 +16,15 @@ class LocalStorageService {
   );
 
   // ─── Tokens ───────────────────────────────────────────────
+  // NOTE: flutter_secure_storage is not supported on the web build.
+  // On web we fall back to SharedPreferences; native platforms use secure storage.
   Future<void> saveTokens(String accessToken, String refreshToken) async {
+    if (kIsWeb) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(AppConstants.keyAccessToken, accessToken);
+      await prefs.setString(AppConstants.keyRefreshToken, refreshToken);
+      return;
+    }
     await Future.wait([
       _secureStorage.write(key: AppConstants.keyAccessToken, value: accessToken),
       _secureStorage.write(key: AppConstants.keyRefreshToken, value: refreshToken),
@@ -23,14 +32,28 @@ class LocalStorageService {
   }
 
   Future<String?> getAccessToken() async {
+    if (kIsWeb) {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(AppConstants.keyAccessToken);
+    }
     return _secureStorage.read(key: AppConstants.keyAccessToken);
   }
 
   Future<String?> getRefreshToken() async {
+    if (kIsWeb) {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(AppConstants.keyRefreshToken);
+    }
     return _secureStorage.read(key: AppConstants.keyRefreshToken);
   }
 
   Future<void> clearTokens() async {
+    if (kIsWeb) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(AppConstants.keyAccessToken);
+      await prefs.remove(AppConstants.keyRefreshToken);
+      return;
+    }
     await Future.wait([
       _secureStorage.delete(key: AppConstants.keyAccessToken),
       _secureStorage.delete(key: AppConstants.keyRefreshToken),
@@ -95,9 +118,9 @@ class LocalStorageService {
   // ─── Clear All ────────────────────────────────────────────
   Future<void> clearAll() async {
     final prefs = await SharedPreferences.getInstance();
-    await Future.wait([
-      prefs.clear(),
-      _secureStorage.deleteAll(),
-    ]);
+    await prefs.clear();
+    if (!kIsWeb) {
+      await _secureStorage.deleteAll();
+    }
   }
 }
