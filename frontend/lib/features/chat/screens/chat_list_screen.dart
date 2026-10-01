@@ -1,0 +1,323 @@
+﻿import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:shimmer/shimmer.dart';
+import 'package:timeago/timeago.dart' as timeago;
+
+import '../../../app/theme/app_colors.dart';
+import '../../../features/auth/providers/auth_provider.dart';
+import '../models/conversation_model.dart';
+import '../providers/chat_provider.dart';
+import '../../../shared/widgets/avatar_widget.dart';
+
+class ChatListScreen extends ConsumerStatefulWidget {
+  const ChatListScreen({super.key});
+
+  @override
+  ConsumerState<ChatListScreen> createState() => _ChatListScreenState();
+}
+
+class _ChatListScreenState extends ConsumerState<ChatListScreen> with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+  final _searchController = TextEditingController();
+  String _searchQuery = '';
+  bool _isSearching = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 3, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final conversationsAsync = ref.watch(conversationsProvider);
+    final currentUser = ref.watch(currentUserProvider);
+
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        toolbarHeight: 68,
+        title: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text('Messages'),
+            SizedBox(height: 2),
+            Text(
+              'Stay close, across every language',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: AppColors.textSecondary),
+            ),
+          ],
+        ),
+        actions: [
+          IconButton(
+            tooltip: _isSearching ? 'Close search' : 'Search conversations',
+            icon: Icon(_isSearching ? Icons.close : Icons.search),
+            onPressed: () => setState(() {
+              _isSearching = !_isSearching;
+              if (!_isSearching) { _searchController.clear(); _searchQuery = ''; }
+            }),
+          ),
+          IconButton(tooltip: 'Notifications', icon: const Icon(Icons.notifications_outlined), onPressed: () {}),
+          const SizedBox(width: 4),
+        ],
+        bottom: PreferredSize(
+          preferredSize: Size.fromHeight(_isSearching ? 116 : 52),
+          child: Column(children: [
+            if (_isSearching) Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: TextField(
+                controller: _searchController,
+                autofocus: true,
+                onChanged: (value) => setState(() => _searchQuery = value.trim()),
+                decoration: InputDecoration(
+                  hintText: 'Search conversations',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: _searchQuery.isEmpty ? null : IconButton(
+                    tooltip: 'Clear search', icon: const Icon(Icons.clear),
+                    onPressed: () { _searchController.clear(); setState(() => _searchQuery = ''); },
+                  ),
+                ),
+              ),
+            ),
+            TabBar(
+              controller: _tabController,
+              labelColor: AppColors.primary,
+              unselectedLabelColor: AppColors.textSecondary,
+              indicatorColor: AppColors.primary,
+              labelStyle: const TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w600, fontSize: 13),
+              tabs: const [Tab(text: 'All'), Tab(text: 'Direct'), Tab(text: 'Groups')],
+            ),
+          ]),
+        ),
+      ),
+      body: conversationsAsync.when(
+        loading: () => _buildShimmer(),
+        error: (e, _) => Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, size: 48, color: AppColors.error),
+              const SizedBox(height: 12),
+              Text('Failed to load chats', style: TextStyle(color: AppColors.textSecondary)),
+              TextButton(onPressed: () => ref.invalidate(conversationsProvider), child: const Text('Retry')),
+            ],
+          ),
+        ),
+        data: (conversations) {
+          if (conversations.isEmpty) return _buildEmptyState();
+
+          return TabBarView(
+            controller: _tabController,
+            children: [
+              _buildConversationList(conversations, currentUser?.id ?? '', null),
+              _buildConversationList(conversations, currentUser?.id ?? '', 'direct'),
+              _buildConversationList(conversations, currentUser?.id ?? '', 'group'),
+            ],
+          );
+        },
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => context.push('/new-conversation'),
+        child: const Icon(Icons.edit_outlined),
+      ),
+    );
+  }
+
+  Widget _buildConversationList(List<ConversationModel> conversations, String currentUserId, String? filter) {
+    var filtered = filter != null ? conversations.where((c) => c.type == filter).toList() : conversations;
+    if (_searchQuery.isNotEmpty) {
+      filtered = filtered.where((c) {
+        final name = c.getDisplayName(currentUserId).toLowerCase();
+        return name.contains(_searchQuery.toLowerCase());
+      }).toList();
+    }
+
+    if (filtered.isEmpty) return _buildEmptyState(isSearchResult: _searchQuery.isNotEmpty);
+
+    return RefreshIndicator(
+      onRefresh: () async => ref.invalidate(conversationsProvider),
+      child: ListView.builder(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        itemCount: filtered.length,
+        itemBuilder: (context, i) => _ConversationTile(
+          conversation: filtered[i],
+          currentUserId: currentUserId,
+          preferredLanguage: ref.read(currentUserProvider)?.preferredLanguage ?? 'english',
+          onTap: () => context.push('/chat/${filtered[i].id}'),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildShimmer() {
+    return Shimmer.fromColors(
+      baseColor: Colors.grey[300]!,
+      highlightColor: Colors.grey[100]!,
+      child: ListView.builder(
+        itemCount: 8,
+        itemBuilder: (_, i) => Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            children: [
+              const CircleAvatar(radius: 28, backgroundColor: Colors.white),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(height: 14, width: 120, color: Colors.white, margin: const EdgeInsets.only(bottom: 6)),
+                    Container(height: 12, color: Colors.white),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState({bool isSearchResult = false}) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 84,
+            height: 84,
+            decoration: BoxDecoration(color: AppColors.primary.withValues(alpha: .08), shape: BoxShape.circle),
+            child: const Icon(Icons.forum_outlined, size: 40, color: AppColors.primary),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            isSearchResult ? 'No conversations found' : 'No conversations yet',
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: AppColors.textPrimary, fontFamily: 'Poppins'),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            isSearchResult ? 'Try another name or clear your search' : 'Start a conversation to connect across languages',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: AppColors.textSecondary, fontFamily: 'Poppins'),
+          ),
+          const SizedBox(height: 24),
+          if (!isSearchResult)
+            ElevatedButton.icon(
+              onPressed: () => context.push('/new-conversation'),
+              icon: const Icon(Icons.add),
+              label: const Text('New Conversation'),
+              style: ElevatedButton.styleFrom(minimumSize: const Size(160, 48)),
+            ),
+        ],
+      ),
+    );
+  }
+
+}
+
+class _ConversationTile extends StatelessWidget {
+  final ConversationModel conversation;
+  final String currentUserId;
+  final String preferredLanguage;
+  final VoidCallback onTap;
+
+  const _ConversationTile({
+    required this.conversation,
+    required this.currentUserId,
+    required this.preferredLanguage,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final displayName = conversation.getDisplayName(currentUserId);
+    final avatarUrl = conversation.getDisplayAvatar(currentUserId);
+    final isOnline = conversation.getOtherUserOnlineStatus(currentUserId);
+    final lastMsg = conversation.lastMessage;
+    final lastMsgText = lastMsg?.getContentForLanguage(preferredLanguage) ?? '';
+
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Row(
+          children: [
+            UserAvatar(
+              displayName: displayName,
+              avatarUrl: avatarUrl,
+              isOnline: isOnline,
+              size: AvatarSize.medium,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          displayName,
+                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: AppColors.textPrimary, fontFamily: 'Poppins'),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (lastMsg != null)
+                        Text(
+                          timeago.format(lastMsg.createdAt, locale: 'en_short'),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: conversation.unreadCount > 0 ? AppColors.primary : AppColors.textHint,
+                            fontFamily: 'Poppins',
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          lastMsg?.isDeleted == true ? 'ðŸš« Message deleted' : (lastMsgText.isEmpty ? 'No messages yet' : lastMsgText),
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: conversation.unreadCount > 0 ? AppColors.textPrimary : AppColors.textSecondary,
+                            fontWeight: conversation.unreadCount > 0 ? FontWeight.w500 : FontWeight.w400,
+                            fontFamily: 'Poppins',
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                      ),
+                      if (conversation.unreadCount > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: AppColors.primary,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '${conversation.unreadCount}',
+                            style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700, fontFamily: 'Poppins'),
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+

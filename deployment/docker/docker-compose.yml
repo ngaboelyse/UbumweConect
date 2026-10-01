@@ -1,0 +1,141 @@
+version: "3.9"
+
+# ============================================================
+# Ubumwe Connect - Docker Compose (Development)
+# ============================================================
+
+services:
+
+  # ----------------------------------------------------------
+  # PostgreSQL Database
+  # ----------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: ubumwe_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ubumwe_user
+      POSTGRES_PASSWORD: ubumwe_pass
+      POSTGRES_DB: ubumwe_db
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../../database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ../../database/seed_data.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ubumwe_user -d ubumwe_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ubumwe_net
+
+  # ----------------------------------------------------------
+  # Redis Cache
+  # ----------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: ubumwe_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass redis_pass
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis_pass", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ubumwe_net
+
+  # ----------------------------------------------------------
+  # FastAPI Backend
+  # ----------------------------------------------------------
+  backend:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+      target: production
+    container_name: ubumwe_backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - ../../backend/.env
+    environment:
+      # Override DB/Redis URLs to use Docker service names (not localhost)
+      DATABASE_URL: postgresql+asyncpg://ubumwe_user:ubumwe_pass@postgres:5432/ubumwe_db
+      DATABASE_URL_SYNC: postgresql://ubumwe_user:ubumwe_pass@postgres:5432/ubumwe_db
+      REDIS_URL: redis://:redis_pass@redis:6379/0
+    volumes:
+      - ../../backend:/app
+      - backend_uploads:/app/uploads
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - ubumwe_net
+
+  # ----------------------------------------------------------
+  # pgAdmin (DB Management UI — dev only)
+  # ----------------------------------------------------------
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: ubumwe_pgadmin
+    restart: unless-stopped
+    profiles: ["dev-tools"]
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@ubumwe.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    networks:
+      - ubumwe_net
+
+  # ----------------------------------------------------------
+  # Redis Commander (Cache UI — dev only)
+  # ----------------------------------------------------------
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: ubumwe_redis_commander
+    restart: unless-stopped
+    profiles: ["dev-tools"]
+    environment:
+      REDIS_HOSTS: "local:redis:6379:0:redis_pass"
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    networks:
+      - ubumwe_net
+
+# ============================================================
+# VOLUMES
+# ============================================================
+volumes:
+  postgres_data:
+    name: ubumwe_postgres_data
+  redis_data:
+    name: ubumwe_redis_data
+  backend_uploads:
+    name: ubumwe_backend_uploads
+
+# ============================================================
+# NETWORKS
+# ============================================================
+networks:
+  ubumwe_net:
+    name: ubumwe_network
+    driver: bridge

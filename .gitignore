@@ -1,0 +1,29 @@
+# Python
+backend/.venv/
+backend/pip_probe/
+backend/**/__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Databases
+*.db
+
+# Logs
+*.log
+
+# IDE
+.idea/
+.vscode/
+
+# Flutter / Dart
+frontend/.dart_tool/
+frontend/build/
+frontend/windows/flutter/ephemeral/
+frontend/windows/firebase_cpp_sdk/
+frontend/packages/
+frontend/pubspec.lock
+
+# Misc
+node_modules/
+firebase-credentials.json
+.env
