@@ -8,6 +8,7 @@ import '../../../core/constants/app_constants.dart';
 import '../../../features/auth/models/user_model.dart';
 import '../../../shared/services/api_service.dart';
 import '../../chat/providers/chat_provider.dart';
+import '../../calls/providers/call_controller.dart';
 
 final userProfileProvider = FutureProvider.family<UserModel, String>((ref, userId) async {
   final api = ref.read(apiServiceProvider);
@@ -138,7 +139,7 @@ class _UserProfileBody extends ConsumerWidget {
                         icon: Icons.call_outlined,
                         label: 'Voice Call',
                         color: AppColors.success,
-                        onTap: () => _startCall(context, 'voice'),
+                        onTap: () => _startCall(context, ref, 'voice'),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -147,7 +148,7 @@ class _UserProfileBody extends ConsumerWidget {
                         icon: Icons.videocam_outlined,
                         label: 'Video',
                         color: AppColors.secondary,
-                        onTap: () => _startCall(context, 'video'),
+                        onTap: () => _startCall(context, ref, 'video'),
                       ),
                     ),
                   ],
@@ -256,8 +257,39 @@ class _UserProfileBody extends ConsumerWidget {
     }
   }
 
-  void _startCall(BuildContext context, String type) {
-    context.push('/call/$type/${user.id}');
+  void _startCall(BuildContext context, WidgetRef ref, String type) async {
+    // Calls need a conversation + a CallSession — create (or reuse) the direct
+    // conversation, find the peer, then create the call via the controller.
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final conv = await ref.read(conversationsProvider.notifier).createConversation(
+            participantIds: [user.id],
+            type: 'direct',
+          );
+      if (!context.mounted) return;
+
+      final callType = type == 'video' ? CallType.video : CallType.voice;
+      final callId = await ref.read(callControllerProvider.notifier).createCall(
+            conversationId: conv.id,
+            peerId: user.id,
+            peerName: user.displayName,
+            peerAvatar: user.avatarUrl,
+            type: callType,
+          );
+      if (!context.mounted) return;
+      if (callId == null) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Could not start the call — is the server running?'), backgroundColor: AppColors.error),
+        );
+        return;
+      }
+      final route = type == 'video' ? '/call/video' : '/call/voice';
+      if (context.mounted) context.push('$route/$callId');
+    } catch (e) {
+      if (context.mounted) {
+        messenger.showSnackBar(SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.error));
+      }
+    }
   }
 }
 

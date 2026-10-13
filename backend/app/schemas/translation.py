@@ -42,26 +42,6 @@ class LanguageDetectionResponse(BaseModel):
     possible_languages: List[Dict[str, float]] = []
 
 
-class VoiceTranslationRequest(BaseModel):
-    source_language: Optional[str] = None
-    target_language: str
-    generate_audio: bool = True
-
-
-class VoiceTranslationResponse(BaseModel):
-    original_text: str
-    translated_text: str
-    source_language: str
-    target_language: str
-    audio_url: Optional[str] = None
-
-
-class TTSRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=2000)
-    language: str = Field(..., pattern=r"^(kinyarwanda|english|french|swahili)$")
-    voice: Optional[str] = "alloy"
-
-
 class AITranslationImprovementRequest(BaseModel):
     original_text: str
     current_translation: str

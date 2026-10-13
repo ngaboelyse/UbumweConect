@@ -20,6 +20,45 @@ class PushTokenRequest(BaseModel):
     platform: str = "android"
 
 
+class DeleteAccountRequest(BaseModel):
+    password: str
+    confirmation: str
+
+
+@router.delete("/me", status_code=200)
+async def delete_account(
+    data: DeleteAccountRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Soft-delete the current user's account after verifying their password.
+    The account is deactivated (is_active=False) and all sessions are revoked,
+    satisfying the "delete my account and data" requirement (FR-008) without
+    destroying conversation history for other participants."""
+    from app.services import auth_service
+    from app.models.user import UserSession
+
+    if data.confirmation.strip().upper() != "DELETE MY ACCOUNT":
+        raise HTTPException(status_code=400, detail='Type "DELETE MY ACCOUNT" to confirm')
+
+    user = await auth_service.authenticate_user(db, current_user.email, data.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Incorrect password")
+
+    current_user.is_active = False
+    # Revoke every active session so all devices are logged out immediately.
+    result = await db.execute(
+        select(UserSession).where(
+            UserSession.user_id == current_user.id,
+            UserSession.is_active == True,  # noqa: E712
+        )
+    )
+    for session in result.scalars().all():
+        session.is_active = False
+    await db.commit()
+    return {"message": "Account deleted", "detail": "Your account has been deactivated and all sessions revoked."}
+
+
 @router.get("/profile", response_model=UserResponse)
 async def get_profile(current_user: User = Depends(get_current_user)):
     return UserResponse.model_validate(current_user)

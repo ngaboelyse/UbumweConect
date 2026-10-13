@@ -146,6 +146,14 @@ class AuthNotifier extends StateNotifier<AsyncValue<UserModel?>> {
     _ref.read(currentUserProvider.notifier).state = user;
   }
 
+  Future<void> deleteAccount(String password) async {
+    await _api.delete('/users/me', data: {
+      'password': password,
+      'confirmation': 'DELETE MY ACCOUNT',
+    });
+    await logout();
+  }
+
   Future<void> _saveAuthData(Map<String, dynamic> data) async {
     await _storage.saveTokens(
       data['access_token'] as String,

@@ -1,10 +1,10 @@
-from typing import List
+﻿from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 from sqlalchemy.orm import selectinload
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.database import get_db
 from app.models.chat import Conversation, ConversationParticipant
@@ -79,12 +79,31 @@ async def initiate_call(
                     call_id=str(call.id),
                 )
 
-    return CallResponse.model_validate(call)
+    return _call_response(call)
+
+
+def _call_response(call: Call) -> CallResponse:
+    """Serialize a Call from its column values only.
+    Never touch `call.caller` / `call.participants` relationships here:
+    lazy-loading them on an AsyncSession raises MissingGreenlet (500)."""
+    return CallResponse(
+        id=call.id,
+        conversation_id=call.conversation_id,
+        caller_id=call.caller_id,
+        call_type=call.call_type.value if isinstance(call.call_type, CallType) else str(call.call_type),
+        status=call.status.value if isinstance(call.status, CallStatus) else str(call.status),
+        started_at=call.started_at,
+        ended_at=call.ended_at,
+        duration_seconds=call.duration_seconds,
+        created_at=call.created_at,
+    )
 
 
 async def _get_call_for_user(call_id: uuid.UUID, db: AsyncSession, current_user: User) -> Call:
-    """Fetch a call and verify current_user is a caller or an existing participant.
-    Raises 404/403."""
+    """Fetch a call and verify current_user is the caller, a call participant,
+    or a participant of the call's conversation (the callee is only added as a
+    CallParticipant upon accept, so they must be authorized via the
+    conversation membership). Raises 404/403."""
     result = await db.execute(
         select(Call).where(Call.id == call_id).options(selectinload(Call.participants))
     )
@@ -95,7 +114,15 @@ async def _get_call_for_user(call_id: uuid.UUID, db: AsyncSession, current_user:
     is_caller = call.caller_id == current_user.id
     is_participant = any(p.user_id == current_user.id for p in call.participants)
     if not (is_caller or is_participant):
-        raise HTTPException(status_code=403, detail="Access denied")
+        # Fall back to conversation membership (callee ringing side).
+        conv_result = await db.execute(
+            select(ConversationParticipant).where(
+                ConversationParticipant.conversation_id == call.conversation_id,
+                ConversationParticipant.user_id == current_user.id,
+            )
+        )
+        if conv_result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=403, detail="Access denied")
     return call
 
 
@@ -107,10 +134,10 @@ async def accept_call(
 ):
     call = await _get_call_for_user(call_id, db, current_user)
 
-    if call.status not in (CallStatus.RINGING, CallStatus.ACTIVE):
+    if call.status not in (CallStatus.RINGING, CallStatus.CONNECTED):
         raise HTTPException(status_code=409, detail="Call is no longer available")
 
-    call.status = CallStatus.ACTIVE
+    call.status = CallStatus.CONNECTED
     call.started_at = call.started_at or datetime.utcnow()
 
     # Only create a participant record if this user hasn't joined yet
@@ -130,7 +157,7 @@ async def accept_call(
         {"event": "call_accepted", "data": {"call_id": str(call_id), "user_id": str(current_user.id)}}
     )
 
-    return CallResponse.model_validate(call)
+    return _call_response(call)
 
 
 @router.put("/{call_id}/reject", response_model=CallResponse)
@@ -151,7 +178,7 @@ async def reject_call(
         {"event": "call_rejected", "data": {"call_id": str(call_id), "user_id": str(current_user.id)}}
     )
 
-    return CallResponse.model_validate(call)
+    return _call_response(call)
 
 
 @router.put("/{call_id}/end", response_model=CallResponse)
@@ -162,10 +189,15 @@ async def end_call(
 ):
     call = await _get_call_for_user(call_id, db, current_user)
 
+    now = datetime.now(timezone.utc)
     call.status = CallStatus.ENDED
-    call.ended_at = datetime.utcnow()
+    call.ended_at = now
     if call.started_at:
-        call.duration_seconds = int((call.ended_at - call.started_at).total_seconds())
+        # started_at may be naive (legacy rows) or timezone-aware (from DB).
+        started = call.started_at
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        call.duration_seconds = int((now - started).total_seconds())
 
     for p in call.participants:
         if not p.left_at:
@@ -182,7 +214,7 @@ async def end_call(
                 {"event": "call_ended", "data": {"call_id": str(call_id)}}
             )
 
-    return CallResponse.model_validate(call)
+    return _call_response(call)
 
 
 @router.get("/history", response_model=List[CallResponse])
@@ -199,7 +231,7 @@ async def call_history(
         .limit(limit)
     )
     calls = result.scalars().all()
-    return [CallResponse.model_validate(c) for c in calls]
+    return [_call_response(c) for c in calls]
 
 
 @router.post("/{call_id}/signal")
@@ -224,9 +256,17 @@ async def webrtc_signal(
 
 @router.get("/turn-credentials", response_model=TURNCredentials)
 async def get_turn_credentials(current_user: User = Depends(get_current_user)):
-    """Get TURN server credentials for WebRTC."""
+    """Get TURN/STUN server credentials for WebRTC."""
+    urls = []
+    if settings.TURN_SERVER_URL:
+        urls.append(settings.TURN_SERVER_URL)
+        urls.append(settings.TURN_SERVER_URL.replace("turn:", "stun:"))
+    # Always include a public STUN server so peers behind different NATs can
+    # at least discover their public address even when TURN is not configured.
+    if not any(u.startswith("stun:") for u in urls):
+        urls.append("stun:stun.l.google.com:19302")
     return TURNCredentials(
-        urls=[settings.TURN_SERVER_URL, settings.TURN_SERVER_URL.replace("turn:", "stun:")],
+        urls=urls,
         username=settings.TURN_USERNAME,
         credential=settings.TURN_PASSWORD,
     )

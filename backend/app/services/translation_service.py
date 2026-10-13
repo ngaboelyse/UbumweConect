@@ -3,6 +3,7 @@ import json
 from typing import Optional, Dict, List
 from datetime import datetime
 
+import httpx
 from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -11,13 +12,18 @@ from app.config import settings
 from app.models.translation import TranslationCache
 
 
-SUPPORTED_LANGUAGES = ["kinyarwanda", "english", "french", "swahili"]
+SUPPORTED_LANGUAGES = ["kinyarwanda", "english", "french", "swahili", "spanish", "arabic", "portuguese", "german", "chinese"]
 
 LANGUAGE_NAMES = {
     "kinyarwanda": "Kinyarwanda",
     "english": "English",
     "french": "French",
     "swahili": "Swahili",
+    "spanish": "Spanish",
+    "arabic": "Arabic",
+    "portuguese": "Portuguese",
+    "german": "German",
+    "chinese": "Chinese",
 }
 
 LANGUAGE_CODES = {
@@ -25,6 +31,11 @@ LANGUAGE_CODES = {
     "english": "en",
     "french": "fr",
     "swahili": "sw",
+    "spanish": "es",
+    "arabic": "ar",
+    "portuguese": "pt",
+    "german": "de",
+    "chinese": "zh",
 }
 
 # Language detection hints (common words/phrases)
@@ -38,6 +49,49 @@ LANGUAGE_HINTS = {
 client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 # Alias so tests (and external callers) can patch a well-known name.
 openai_client = client
+
+
+def _has_openai_key() -> bool:
+    """True when a real OpenAI key is configured (not the placeholder)."""
+    key = (settings.OPENAI_API_KEY or "").strip()
+    return bool(key) and not key.startswith("sk-placeholder")
+
+
+async def _google_fallback_translate(text: str, source_language: str, target_language: str) -> str:
+    """Free fallback using Google's public translate endpoints (no API key).
+    Supports Kinyarwanda. Tries clients5.google.com first, then MyMemory."""
+    src = LANGUAGE_CODES.get(source_language, "auto")
+    tgt = LANGUAGE_CODES.get(target_language, target_language)
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    async with httpx.AsyncClient(timeout=15, headers=headers) as http:
+        # Primary: clients5 translate endpoint (less rate-limited)
+        try:
+            resp = await http.get(
+                "https://clients5.google.com/translate_a/t",
+                params={"client": "dict-chrome-ex", "sl": src, "tl": tgt, "q": text},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            # Response: ["translated text"] or [["translated"],...]
+            if isinstance(data, list):
+                if data and isinstance(data[0], str):
+                    return " ".join(part for part in data if isinstance(part, str))
+                if data and isinstance(data[0], list) and data[0] and isinstance(data[0][0], str):
+                    return data[0][0]
+            return str(data)
+        except Exception:
+            pass
+        # Secondary: MyMemory (lower quality for Kinyarwanda, but works)
+        try:
+            resp = await http.get(
+                "https://api.mymemory.translated.net/get",
+                params={"q": text, "langpair": f"{src}|{tgt}"},
+            )
+            resp.raise_for_status()
+            return resp.json().get("responseData", {}).get("translatedText", "") or ""
+        except Exception:
+            pass
+    raise RuntimeError("All free translation providers failed")
 
 
 def _compute_hash(text: str) -> str:
@@ -217,6 +271,18 @@ async def translate(
                 "cached": True,
             }
 
+    if not _has_openai_key():
+        # No OpenAI key configured: use the free Google fallback + still cache the result.
+        translated_text = await _google_fallback_translate(text, source_language, target_language)
+        if db:
+            await _save_to_cache(db, text, text_hash, source_language, target_language, translated_text)
+        return {
+            "translated_text": translated_text,
+            "source_language": source_language,
+            "target_language": target_language,
+            "cached": False,
+        }
+
     src_name = LANGUAGE_NAMES.get(source_language, source_language.capitalize())
     tgt_name = LANGUAGE_NAMES.get(target_language, target_language.capitalize())
 
@@ -229,14 +295,21 @@ async def translate(
         f"Text to translate: {text}"
     )
 
-    response = await openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=1000,
-        temperature=0.3,
-    )
-
-    translated_text = response.choices[0].message.content.strip()
+    try:
+        response = await openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=1000,
+            temperature=0.3,
+        )
+        translated_text = response.choices[0].message.content.strip()
+    except Exception as e:
+        # OpenAI failed (bad key, quota, outage): fall back to the free translator
+        # so messages always get translated rather than being delivered as-is.
+        try:
+            translated_text = await _google_fallback_translate(text, source_language, target_language)
+        except Exception:
+            raise RuntimeError(f"Translation failed (OpenAI: {e}; fallback also failed)")
 
     # Save to cache
     if db:

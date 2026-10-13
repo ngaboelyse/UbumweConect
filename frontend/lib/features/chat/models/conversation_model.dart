@@ -128,7 +128,7 @@ class ConversationModel extends Equatable {
       avatarUrl: avatarUrl,
       createdBy: createdBy,
       participants: participants,
-      lastMessage: lastMessage ?? this.lastMessage,
+      lastMessage: lastMessage ?? lastMessage,
       unreadCount: unreadCount ?? this.unreadCount,
       createdAt: createdAt,
       updatedAt: updatedAt,

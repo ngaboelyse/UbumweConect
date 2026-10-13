@@ -15,7 +15,7 @@ class CallType(str, enum.Enum):
 
 class CallStatus(str, enum.Enum):
     RINGING = "ringing"
-    ACTIVE = "active"
+    CONNECTED = "connected"
     ENDED = "ended"
     MISSED = "missed"
     REJECTED = "rejected"
@@ -27,8 +27,17 @@ class Call(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     conversation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
     caller_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    call_type: Mapped[CallType] = mapped_column(SAEnum(CallType), nullable=False)
-    status: Mapped[CallStatus] = mapped_column(SAEnum(CallStatus), nullable=False, default=CallStatus.RINGING)
+    call_type: Mapped[CallType] = mapped_column(
+        SAEnum(CallType, values_callable=lambda enum_cls: [item.value for item in enum_cls],
+               name="call_type", create_type=False),
+        nullable=False,
+    )
+    status: Mapped[CallStatus] = mapped_column(
+        SAEnum(CallStatus, values_callable=lambda enum_cls: [item.value for item in enum_cls],
+               name="call_status", create_type=False),
+        nullable=False,
+        default=CallStatus.RINGING,
+    )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)

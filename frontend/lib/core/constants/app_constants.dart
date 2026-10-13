@@ -1,3 +1,7 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
+
+import '../utils/host_discovery.dart';
+
 class AppConstants {
   AppConstants._();
 
@@ -5,9 +9,47 @@ class AppConstants {
   static const String appTagline = 'Bringing People Together Beyond Language';
   static const String appVersion = '1.0.0';
 
-  // API
-  static const String baseUrl = 'http://127.0.0.1:8000/api/v1';
-  static const String wsBaseUrl = 'ws://127.0.0.1:8000/ws';
+  // Backend endpoint.
+  // WEB: the host is auto-detected from the browser URL, so any device on the
+  // same Wi-Fi can open the app at http://<PC-IP>:3000 and reach the backend
+  // at http://<PC-IP>:8000 with zero configuration.
+  // MOBILE (Android/iOS/desktop): the LAN host is auto-discovered by probing
+  // the device's subnet for the backend /health endpoint (see HostDiscovery).
+  // `defaultHost` is only the last-resort fallback if probing finds nothing.
+  // Android emulator: '10.0.2.2:8000'.
+  static const String defaultHost = '10.20.2.131:8000';
+  static const bool useTls = false; // true = https/wss (tunnel), false = http/ws (local/LAN)
+
+  // The web build is served on :3000 but the backend listens on :8000.
+  static const String webPort = '3000';
+  static const String apiPort = '8000';
+
+  /// Synchronously usable host. Returns the last discovered host, or falls
+  /// back to [defaultHost] before discovery has run. Call [initHost] at app
+  /// startup so the discovered value is set before the first API call.
+  static String get host {
+    if (kIsWeb) {
+      final b = Uri.base;
+      if (b.host.isEmpty) return defaultHost;
+      final port = b.hasPort || b.port > 0 ? '${b.port}' : '';
+      // The backend listens on the API port. Only reuse the browser port when
+      // the app is served from the API port itself (same-origin deployment);
+      // any other port (3000, 8080, ...) is the web server, not the API.
+      final api = (port.isEmpty || port == webPort) ? apiPort : (port == apiPort ? port : apiPort);
+      return api.isEmpty ? b.host : '${b.host}:$api';
+    }
+    return HostDiscovery.resolvedHost ?? defaultHost;
+  }
+
+  /// Runs LAN discovery once at startup (non-web only). Safe to await or fire
+  /// and forget; [host] picks up the result as soon as it completes.
+  static Future<void> initHost() async {
+    if (kIsWeb) return;
+    await HostDiscovery.resolve();
+  }
+
+  static String get baseUrl => '${useTls ? 'https' : 'http'}://$host/api/v1';
+  static String get wsBaseUrl => '${useTls ? 'wss' : 'ws'}://$host/ws';
 
   // Supported Languages
   static const List<Map<String, String>> supportedLanguages = [
@@ -39,7 +81,44 @@ class AppConstants {
       'flag': '🇹🇿',
       'iso': 'sw',
     },
+    {
+      'code': 'spanish',
+      'name': 'Spanish',
+      'native': 'Español',
+      'flag': '🇪🇸',
+      'iso': 'es',
+    },
+    {
+      'code': 'arabic',
+      'name': 'Arabic',
+      'native': 'العربية',
+      'flag': '🇸🇦',
+      'iso': 'ar',
+    },
+    {
+      'code': 'portuguese',
+      'name': 'Portuguese',
+      'native': 'Português',
+      'flag': '🇵🇹',
+      'iso': 'pt',
+    },
+    {
+      'code': 'german',
+      'name': 'German',
+      'native': 'Deutsch',
+      'flag': '🇩🇪',
+      'iso': 'de',
+    },
+    {
+      'code': 'chinese',
+      'name': 'Chinese',
+      'native': '中文',
+      'flag': '🇨🇳',
+      'iso': 'zh',
+    },
   ];
+
+  /// Preview of a greeting in each supported language (used in language settings).
 
   // Message types
   static const String msgTypeText = 'text';

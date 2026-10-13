@@ -1,5 +1,4 @@
-import 'dart:io';
-
+import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/conversation_model.dart';
@@ -107,7 +106,9 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<MessageModel>, String> {
         .map((m) => MessageModel.fromJson(m as Map<String, dynamic>))
         .toList();
 
-    return messages.reversed.toList();
+    // API returns newest-first, which matches the reverse:true ListView
+    // (index 0 renders at the bottom of the screen).
+    return messages;
   }
 
   Future<void> loadMore() async {
@@ -147,15 +148,18 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<MessageModel>, String> {
     required String caption,
     String? replyToId,
     double? durationSeconds,
+    Uint8List? fileBytes, // required on web (no real file path exists)
   }) async {
     final api = ref.read(apiServiceProvider);
-    final fileName = filePath.split(Platform.pathSeparator).last;
+    final fileName = filePath.split(RegExp(r'[/\\]')).last;
 
     final uploadResult = await api.postMultipart(
       '/conversations/$arg/attachments',
       FormData.fromMap({
         'kind': kind,
-        'file': await MultipartFile.fromFile(filePath, filename: fileName),
+        'file': fileBytes != null
+            ? MultipartFile.fromBytes(fileBytes, filename: fileName)
+            : await MultipartFile.fromFile(filePath, filename: fileName),
       }),
     );
 

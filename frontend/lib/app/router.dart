@@ -19,16 +19,23 @@ import '../features/profile/screens/profile_screen.dart';
 import '../features/profile/screens/edit_profile_screen.dart';
 import '../features/profile/screens/user_profile_screen.dart';
 import '../features/profile/screens/settings_screen.dart';
+import '../features/profile/screens/help_support_screen.dart';
 import '../features/translation/screens/language_settings_screen.dart';
 import '../features/auth/providers/auth_provider.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
-  final authState = ref.watch(authStateProvider);
+  final refreshNotifier = ValueNotifier<DateTime>(DateTime.now());
+
+  ref.listen(authNotifierProvider, (_, __) {
+    refreshNotifier.value = DateTime.now();
+  });
 
   return GoRouter(
     initialLocation: '/splash',
+    refreshListenable: refreshNotifier,
     redirect: (context, state) {
-      final isLoggedIn = authState.value != null;
+      final authState = ref.read(authNotifierProvider);
+      final isLoggedIn = authState.valueOrNull != null;
       final isAuthRoute = state.matchedLocation.startsWith('/login') ||
           state.matchedLocation.startsWith('/register') ||
           state.matchedLocation.startsWith('/onboarding') ||
@@ -111,7 +118,12 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/incoming-call',
-        builder: (context, state) => const IncomingCallScreen(),
+        builder: (context, state) => IncomingCallScreen(
+          callId: state.uri.queryParameters['call_id'] ?? '',
+          callType: state.uri.queryParameters['call_type'] ?? 'voice',
+          callerName: state.uri.queryParameters['caller_name'] ?? 'Unknown',
+          callerAvatar: state.uri.queryParameters['caller_avatar'] ?? '',
+        ),
       ),
 
       // Profile
@@ -134,6 +146,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/settings/language',
         builder: (context, state) => const LanguageSettingsScreen(),
+      ),
+      GoRoute(
+        path: '/help',
+        builder: (context, state) => const HelpSupportScreen(),
       ),
     ],
     errorBuilder: (context, state) => Scaffold(

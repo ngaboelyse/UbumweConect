@@ -89,8 +89,8 @@ class ApiService {
     return response.data as Map<String, dynamic>;
   }
 
-  Future<void> delete(String path) async {
-    await _dio.delete(path);
+  Future<void> delete(String path, {dynamic data}) async {
+    await _dio.delete(path, data: data);
   }
 
   Future<Map<String, dynamic>> postMultipart(

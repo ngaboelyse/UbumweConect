@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     # OpenAI
     OPENAI_API_KEY: str
 
+    # Google Gemini (Live API for real-time call voice translation)
+    GOOGLE_API_KEY: str = ""  # https://aistudio.google.com/apikey
+
     # AWS S3
     AWS_ACCESS_KEY_ID: str = ""
     AWS_SECRET_ACCESS_KEY: str = ""
@@ -43,10 +46,10 @@ class Settings(BaseSettings):
     AWS_S3_BUCKET: str = "ubumwe-connect-storage"
 
     # CORS
-    CORS_ORIGINS: str = '["http://localhost:3000", "http://localhost:8080"]'
+    CORS_ORIGINS: str = '["http://localhost:3000", "http://localhost", "http://127.0.0.1:3000", "http://127.0.0.1", "http://localhost:8080", "http://10.0.2.2:8000"]'
 
     # Trusted hosts (Host header allow-list). "testserver" is included for pytest.
-    TRUSTED_HOSTS: str = '["localhost", "127.0.0.1", "testserver", "test", "0.0.0.0"]'
+    TRUSTED_HOSTS: str = '["localhost", "127.0.0.1", "testserver", "test", "0.0.0.0", "localhost:3000", "127.0.0.1:3000", "localhost:8080", "127.0.0.1:8080", "localhost:8000", "127.0.0.1:8000"]'
 
     # Email
     SMTP_HOST: str = "smtp.gmail.com"
@@ -72,9 +75,18 @@ class Settings(BaseSettings):
 
     def get_trusted_hosts(self) -> List[str]:
         try:
-            return json.loads(self.TRUSTED_HOSTS)
+            hosts = json.loads(self.TRUSTED_HOSTS)
         except Exception:
-            return ["localhost", "127.0.0.1", "testserver"]
+            hosts = ["localhost", "127.0.0.1", "testserver"]
+        # Allow local-network hosts (e.g. phone -> PC over LAN) in development.
+        # Host header is the address the client typed, so accept raw IPs on the
+        # common private ranges when DEBUG is on.
+        if self.DEBUG:
+            extra = [
+                "*",  # DEBUG only: accept any Host header
+            ]
+            hosts = hosts + [h for h in extra if h not in hosts]
+        return hosts
 
 
 settings = Settings()

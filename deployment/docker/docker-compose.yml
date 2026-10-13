@@ -74,6 +74,9 @@ services:
       DATABASE_URL: postgresql+asyncpg://ubumwe_user:ubumwe_pass@postgres:5432/ubumwe_db
       DATABASE_URL_SYNC: postgresql://ubumwe_user:ubumwe_pass@postgres:5432/ubumwe_db
       REDIS_URL: redis://:redis_pass@redis:6379/0
+    # Single worker is required: WebSockets use the in-memory ConnectionManager;
+    # multiple workers split connections and incoming calls never get delivered.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --loop uvloop
     volumes:
       - ../../backend:/app
       - backend_uploads:/app/uploads

@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../../app/theme/app_colors.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../firebase_options.dart' as fb_opts;
 import '../providers/auth_provider.dart';
 
 class RegisterScreen extends ConsumerStatefulWidget {
@@ -71,6 +74,55 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     final picker = ImagePicker();
     final image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
     if (image != null) setState(() => _avatarPath = image.path);
+  }
+
+  Future<void> _signUpWithGoogle() async {
+    if (!fb_opts.isFirebaseWebConfigured) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Google sign-up is not configured yet. Fill in lib/firebase_options.dart with your Firebase web config.'),
+          backgroundColor: AppColors.warning,
+        ),
+      );
+      return;
+    }
+    setState(() => _isLoading = true);
+    try {
+      final googleSignIn = GoogleSignIn(
+        clientId: fb_opts.googleWebClientId.isNotEmpty &&
+                !fb_opts.googleWebClientId.startsWith('PASTE_')
+            ? fb_opts.googleWebClientId
+            : null,
+      );
+      final account = await googleSignIn.signIn();
+      if (account == null) return;
+
+      final auth = await account.authentication;
+      final credential = GoogleAuthProvider.credential(
+        accessToken: auth.accessToken,
+        idToken: auth.idToken,
+      );
+
+      final userCredential =
+          await FirebaseAuth.instance.signInWithCredential(credential);
+      final firebaseToken = await userCredential.user?.getIdToken() ?? '';
+
+      await ref
+          .read(authNotifierProvider.notifier)
+          .loginWithFirebase(firebaseToken, preferredLanguage: _selectedLanguage);
+      if (mounted) context.go('/home');
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Google sign-up failed: ${e.toString()}'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   Future<void> _register() async {
@@ -310,6 +362,35 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                   child: _isLoading
                       ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                       : const Text('Create Account'),
+                ),
+
+                const SizedBox(height: 20),
+
+                Row(
+                  children: const [
+                    Expanded(child: Divider(color: AppColors.divider)),
+                    Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 14),
+                      child: Text('OR', style: TextStyle(color: AppColors.textHint, fontFamily: 'Poppins', fontSize: 12, fontWeight: FontWeight.w500)),
+                    ),
+                    Expanded(child: Divider(color: AppColors.divider)),
+                  ],
+                ),
+
+                const SizedBox(height: 20),
+
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.textPrimary,
+                    backgroundColor: Colors.white,
+                    side: const BorderSide(color: AppColors.divider),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500, fontFamily: 'Poppins'),
+                    minimumSize: const Size.fromHeight(52),
+                  ),
+                  onPressed: _isLoading ? null : _signUpWithGoogle,
+                  icon: const Text('G', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Color(0xFFDB4437))),
+                  label: const Text('Sign up with Google'),
                 ),
 
                 const SizedBox(height: 16),

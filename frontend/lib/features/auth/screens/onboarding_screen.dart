@@ -31,7 +31,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     _OnboardingData(
       emoji: '📞',
       title: 'Voice & Video Calls',
-      description: 'Make voice and video calls with live subtitle translation. Speak your language, they hear theirs.',
+      description: 'Make crystal-clear voice and video calls over WebRTC.',
       gradientColors: [Color(0xFFE65100), Color(0xFFFF6F00)],
     ),
   ];

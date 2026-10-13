@@ -18,6 +18,7 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
+    ffmpeg \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -45,4 +46,8 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--loop", "uvloop"]
+# WebSockets use an in-memory ConnectionManager, so the app must run with a
+# single worker per container; multiple workers would split connections across
+# processes and incoming calls / signals would not reach their recipient.
+ENV WEBRTC_WORKERS=1
+CMD uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${WEBRTC_WORKERS} --loop uvloop

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../../core/constants/app_constants.dart';
@@ -13,6 +14,10 @@ enum WsConnectionState { disconnected, connecting, connected, reconnecting }
 
 class WebSocketService {
   final LocalStorageService _storage;
+  final Dio _dio = Dio(BaseOptions(  // raw client: no auth interceptor needed
+    connectTimeout: const Duration(seconds: 15),
+    receiveTimeout: const Duration(seconds: 15),
+  ));
   WebSocketChannel? _channel;
   Timer? _reconnectTimer;
   Timer? _pingTimer;
@@ -40,8 +45,8 @@ class WebSocketService {
       final uri = Uri.parse('${AppConstants.wsBaseUrl}/$userId?token=$token');
       _channel = WebSocketChannel.connect(uri);
 
-      _setState(WsConnectionState.connected);
       _reconnectAttempts = 0;
+      _setState(WsConnectionState.connected);
 
       _startPingTimer();
 
@@ -50,6 +55,7 @@ class WebSocketService {
           try {
             final decoded = jsonDecode(data as String) as Map<String, dynamic>;
             _messageController.add(decoded);
+            _setState(WsConnectionState.connected);
           } catch (_) {}
         },
         onDone: () => _handleDisconnect(),
@@ -71,9 +77,27 @@ class WebSocketService {
   void _scheduleReconnect() {
     if (_currentUserId == null) return;
     final delay = Duration(seconds: _getReconnectDelay());
-    _reconnectTimer = Timer(delay, () {
+    _reconnectTimer = Timer(delay, () async {
       _reconnectAttempts++;
-      connect(_currentUserId!);
+      // The access token may have expired while disconnected (the app can sit
+      // in the background for hours). Force a token refresh by calling the
+      // refresh endpoint directly — otherwise reconnects fail 403 forever and
+      // incoming calls / subtitles never arrive.
+      try {
+        final rt = await _storage.getRefreshToken();
+        if (rt != null) {
+          final resp = await _dio.post(
+            '${AppConstants.baseUrl}/auth/refresh',
+            data: {'refresh_token': rt},
+          );
+          final data = resp.data as Map<String, dynamic>;
+          await _storage.saveTokens(data['access_token'], data['refresh_token']);
+        }
+      } catch (_) {
+        // Refresh failed (e.g. refresh token also expired) — still attempt
+        // the socket; if the token is stale the server rejects and we retry.
+      }
+      await connect(_currentUserId!);
     });
   }
 

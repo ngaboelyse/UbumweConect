@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from sqlalchemy import String, Boolean, DateTime, Text, ForeignKey, Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 import enum
 
 from app.database import Base
@@ -13,6 +13,11 @@ class LanguageCode(str, enum.Enum):
     ENGLISH = "english"
     FRENCH = "french"
     SWAHILI = "swahili"
+    SPANISH = "spanish"
+    ARABIC = "arabic"
+    PORTUGUESE = "portuguese"
+    GERMAN = "german"
+    CHINESE = "chinese"
 
 
 class UserRole(str, enum.Enum):
@@ -34,10 +39,24 @@ class User(Base):
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     bio: Mapped[str | None] = mapped_column(Text, nullable=True)
     preferred_language: Mapped[LanguageCode] = mapped_column(
-        SAEnum(LanguageCode), nullable=False, default=LanguageCode.ENGLISH
+        SAEnum(
+            LanguageCode,
+            values_callable=lambda enum_cls: [item.value for item in enum_cls],
+            name="language_code",
+            create_type=False,
+        ),
+        nullable=False,
+        default=LanguageCode.ENGLISH,
     )
     role: Mapped[UserRole] = mapped_column(
-        SAEnum(UserRole), nullable=False, default=UserRole.USER
+        SAEnum(
+            UserRole,
+            values_callable=lambda enum_cls: [item.value for item in enum_cls],
+            name="user_role",
+            create_type=False,
+        ),
+        nullable=False,
+        default=UserRole.USER,
     )
     is_online: Mapped[bool] = mapped_column(Boolean, default=False)
     last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -78,7 +97,7 @@ class UserSession(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     refresh_token: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
-    device_info: Mapped[str | None] = mapped_column(Text, nullable=True)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    device_info: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    is_active: Mapped[bool] = mapped_column("is_valid", Boolean, default=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)

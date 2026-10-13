@@ -29,6 +29,7 @@ CREATE TYPE message_type AS ENUM (
     'text',
     'image',
     'audio',
+    'voice',
     'video',
     'file',
     'system'
@@ -63,6 +64,11 @@ CREATE TYPE call_participant_status AS ENUM (
     'missed'
 );
 
+CREATE TYPE participant_role AS ENUM (
+    'admin',
+    'member'
+);
+
 CREATE TYPE user_role AS ENUM (
     'user',
     'moderator',
@@ -80,6 +86,7 @@ CREATE TABLE users (
     username            VARCHAR(50) NOT NULL UNIQUE,
     display_name        VARCHAR(100) NOT NULL,
     hashed_password     VARCHAR(255),
+    phone               VARCHAR(20),
     avatar_url          TEXT,
     bio                 VARCHAR(500),
     preferred_language  language_code NOT NULL DEFAULT 'english',
@@ -131,6 +138,7 @@ CREATE TABLE user_contacts (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     contact_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    nickname        VARCHAR(100),
     is_blocked      BOOLEAN NOT NULL DEFAULT FALSE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(user_id, contact_id),
@@ -169,6 +177,7 @@ CREATE TABLE conversation_participants (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role            participant_role NOT NULL DEFAULT 'member',
     is_admin        BOOLEAN NOT NULL DEFAULT FALSE,
     is_muted        BOOLEAN NOT NULL DEFAULT FALSE,
     last_read_at    TIMESTAMPTZ,
@@ -189,15 +198,19 @@ CREATE TABLE messages (
     id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     conversation_id     UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     sender_id           UUID REFERENCES users(id) ON DELETE SET NULL,
-    type                message_type NOT NULL DEFAULT 'text',
-    content             TEXT,
+    message_type        message_type NOT NULL DEFAULT 'text',
+    original_content    TEXT,
     original_language   language_code,
     -- JSONB dict: {"english": "...", "french": "...", "kinyarwanda": "...", "swahili": "..."}
     translated_contents JSONB DEFAULT '{}',
     media_url           TEXT,
     media_type          VARCHAR(100),
     media_size          BIGINT,
-    duration_seconds    INTEGER,              -- For audio/video messages
+    duration_seconds    DOUBLE PRECISION,     -- For audio/video messages
+    file_url            TEXT,
+    file_name           VARCHAR(255),
+    file_size           INTEGER,
+    audio_url           TEXT,
     reply_to_id         UUID REFERENCES messages(id) ON DELETE SET NULL,
     is_edited           BOOLEAN NOT NULL DEFAULT FALSE,
     is_deleted          BOOLEAN NOT NULL DEFAULT FALSE,
@@ -253,8 +266,8 @@ CREATE INDEX idx_message_reactions_user_id ON message_reactions(user_id);
 CREATE TABLE calls (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    initiated_by    UUID REFERENCES users(id) ON DELETE SET NULL,
-    type            call_type NOT NULL DEFAULT 'voice',
+    caller_id       UUID REFERENCES users(id) ON DELETE SET NULL,
+    call_type       call_type NOT NULL DEFAULT 'voice',
     status          call_status NOT NULL DEFAULT 'initiated',
     started_at      TIMESTAMPTZ,
     ended_at        TIMESTAMPTZ,
@@ -264,7 +277,7 @@ CREATE TABLE calls (
 );
 
 CREATE INDEX idx_calls_conversation_id ON calls(conversation_id);
-CREATE INDEX idx_calls_initiated_by ON calls(initiated_by);
+CREATE INDEX idx_calls_caller_id ON calls(caller_id);
 CREATE INDEX idx_calls_status ON calls(status);
 CREATE INDEX idx_calls_created_at ON calls(created_at DESC);
 

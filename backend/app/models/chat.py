@@ -36,7 +36,12 @@ class Conversation(Base):
     __tablename__ = "conversations"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    type: Mapped[ConversationType] = mapped_column(SAEnum(ConversationType), nullable=False, default=ConversationType.DIRECT)
+    type: Mapped[ConversationType] = mapped_column(
+        SAEnum(ConversationType, values_callable=lambda enum_cls: [item.value for item in enum_cls],
+               name="conversation_type", create_type=False),
+        nullable=False,
+        default=ConversationType.DIRECT,
+    )
     name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -61,7 +66,12 @@ class ConversationParticipant(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     conversation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    role: Mapped[ParticipantRole] = mapped_column(SAEnum(ParticipantRole), nullable=False, default=ParticipantRole.MEMBER)
+    role: Mapped[ParticipantRole] = mapped_column(
+        SAEnum(ParticipantRole, values_callable=lambda enum_cls: [item.value for item in enum_cls],
+               name="participant_role", create_type=False),
+        nullable=False,
+        default=ParticipantRole.MEMBER,
+    )
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     last_read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -76,7 +86,12 @@ class Message(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     conversation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True)
     sender_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    message_type: Mapped[MessageType] = mapped_column(SAEnum(MessageType), nullable=False, default=MessageType.TEXT)
+    message_type: Mapped[MessageType] = mapped_column(
+        SAEnum(MessageType, values_callable=lambda enum_cls: [item.value for item in enum_cls],
+               name="message_type", create_type=False),
+        nullable=False,
+        default=MessageType.TEXT,
+    )
     original_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     original_language: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # Stores translations as {"english": "...", "french": "...", "kinyarwanda": "...", "swahili": "..."}
@@ -89,7 +104,7 @@ class Message(Base):
     is_edited: Mapped[bool] = mapped_column(Boolean, default=False)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     reply_to_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)
-    metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True, default=dict)
+    extra_metadata: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
@@ -118,7 +133,12 @@ class MessageStatus(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     message_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("messages.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    status: Mapped[MessageStatusType] = mapped_column(SAEnum(MessageStatusType), nullable=False, default=MessageStatusType.SENT)
+    status: Mapped[MessageStatusType] = mapped_column(
+        SAEnum(MessageStatusType, values_callable=lambda enum_cls: [item.value for item in enum_cls],
+               name="message_status", create_type=False),
+        nullable=False,
+        default=MessageStatusType.SENT,
+    )
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships

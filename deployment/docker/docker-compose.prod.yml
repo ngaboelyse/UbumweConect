@@ -51,7 +51,9 @@ services:
       AWS_S3_REGION: ${AWS_S3_REGION}
       CORS_ORIGINS: ${CORS_ORIGINS}
       DEBUG: "false"
-      WORKERS: "4"
+      # Must stay 1: WebSockets use an in-memory ConnectionManager, multiple
+      # workers would split connections and break call/signaling delivery.
+      WORKERS: "1"
     volumes:
       - backend_uploads:/app/uploads
     ports: []  # Behind nginx, not exposed directly

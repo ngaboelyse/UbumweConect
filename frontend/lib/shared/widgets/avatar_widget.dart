@@ -2,8 +2,18 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/theme/app_colors.dart';
+import '../../core/constants/app_constants.dart';
 
 enum AvatarSize { small, medium, large, xlarge }
+
+/// Resolve a server-relative URL (e.g. /files/avatars/x.jpg) against the API
+/// host. Without this, profile pictures saved by the backend never load,
+/// because image providers cannot fetch relative paths.
+String resolveMediaUrl(String url) {
+  if (url.startsWith('http')) return url;
+  final origin = AppConstants.baseUrl.replaceFirst(RegExp(r'/api/v1/?$'), '');
+  return '$origin$url';
+}
 
 class UserAvatar extends StatelessWidget {
   final String displayName;
@@ -47,6 +57,7 @@ class UserAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final resolved = (avatarUrl == null || avatarUrl!.isEmpty) ? null : resolveMediaUrl(avatarUrl!);
     return GestureDetector(
       onTap: onTap,
       child: Stack(
@@ -54,8 +65,8 @@ class UserAvatar extends StatelessWidget {
           CircleAvatar(
             radius: _radius,
             backgroundColor: AppColors.primary.withOpacity(0.15),
-            backgroundImage: avatarUrl != null ? CachedNetworkImageProvider(avatarUrl!) : null,
-            child: avatarUrl == null
+            backgroundImage: resolved != null ? CachedNetworkImageProvider(resolved) : null,
+            child: resolved == null
                 ? Text(
                     _initials,
                     style: TextStyle(

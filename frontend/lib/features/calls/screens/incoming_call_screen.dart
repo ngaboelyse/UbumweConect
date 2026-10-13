@@ -1,12 +1,25 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
+import 'dart:async';
 
 import '../../../app/theme/app_colors.dart';
 import '../../../shared/widgets/avatar_widget.dart';
+import '../providers/call_controller.dart';
 
 class IncomingCallScreen extends ConsumerStatefulWidget {
-  const IncomingCallScreen({super.key});
+  final String callId;
+  final String callType;
+  final String callerName;
+  final String callerAvatar;
+
+  const IncomingCallScreen({
+    super.key,
+    required this.callId,
+    required this.callType,
+    required this.callerName,
+    required this.callerAvatar,
+  });
 
   @override
   ConsumerState<IncomingCallScreen> createState() => _IncomingCallScreenState();
@@ -36,11 +49,20 @@ class _IncomingCallScreenState extends ConsumerState<IncomingCallScreen>
     _pulse3 = Tween<double>(begin: 1.0, end: 2.1).animate(
       CurvedAnimation(parent: _pulseController, curve: const Interval(0.4, 1.0, curve: Curves.easeOut)),
     );
+
+    // Vibrate in sync with the incoming call pulse rings.
+    _vibrationTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      HapticFeedback.heavyImpact();
+    });
+    HapticFeedback.heavyImpact();
   }
+
+  Timer? _vibrationTimer;
 
   @override
   void dispose() {
     _pulseController.dispose();
+    _vibrationTimer?.cancel();
     super.dispose();
   }
 
@@ -60,7 +82,7 @@ class _IncomingCallScreenState extends ConsumerState<IncomingCallScreen>
                 children: [
                   const Text('Ubumwe Connect', style: TextStyle(color: Colors.white54, fontSize: 14, fontFamily: 'Poppins')),
                   const SizedBox(height: 8),
-                  const Text('Incoming Voice Call', style: TextStyle(color: Colors.white70, fontSize: 16, fontFamily: 'Poppins')),
+                  Text('Incoming ${widget.callType == 'video' ? 'Video' : 'Voice'} Call', style: const TextStyle(color: Colors.white70, fontSize: 16, fontFamily: 'Poppins')),
                   const SizedBox(height: 40),
 
                   // Animated avatar
@@ -78,13 +100,13 @@ class _IncomingCallScreenState extends ConsumerState<IncomingCallScreen>
                         ],
                       );
                     },
-                    child: const UserAvatar(displayName: 'Caller', size: AvatarSize.xlarge),
+                    child: UserAvatar(displayName: widget.callerName, avatarUrl: widget.callerAvatar.isEmpty ? null : widget.callerAvatar, size: AvatarSize.xlarge),
                   ),
 
                   const SizedBox(height: 24),
-                  const Text('Caller Name', style: TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.w700, fontFamily: 'Poppins')),
+                  Text(widget.callerName, style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.w700, fontFamily: 'Poppins')),
                   const SizedBox(height: 8),
-                  const Text('+250 7XX XXX XXX', style: TextStyle(color: Colors.white60, fontSize: 16, fontFamily: 'Poppins')),
+                  const Text('Ubumwe Connect', style: TextStyle(color: Colors.white60, fontSize: 16, fontFamily: 'Poppins')),
                 ],
               ),
 
@@ -98,7 +120,7 @@ class _IncomingCallScreenState extends ConsumerState<IncomingCallScreen>
                     Column(
                       children: [
                         GestureDetector(
-                          onTap: () => context.pop(),
+                          onTap: () => ref.read(callControllerProvider.notifier).rejectIncoming(),
                           child: Container(
                             width: 72, height: 72,
                             decoration: const BoxDecoration(color: AppColors.error, shape: BoxShape.circle),
@@ -114,7 +136,7 @@ class _IncomingCallScreenState extends ConsumerState<IncomingCallScreen>
                     Column(
                       children: [
                         GestureDetector(
-                          onTap: () => context.pushReplacement('/call/voice/new'),
+                          onTap: () => ref.read(callControllerProvider.notifier).acceptIncoming(),
                           child: Container(
                             width: 72, height: 72,
                             decoration: const BoxDecoration(color: AppColors.success, shape: BoxShape.circle),

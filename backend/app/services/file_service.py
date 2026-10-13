@@ -1,9 +1,14 @@
 import boto3
 import uuid
 import mimetypes
+import shutil
+from pathlib import Path
 from typing import Optional
 from botocore.exceptions import ClientError
 from app.config import settings
+
+# Local fallback storage used when S3 credentials are not configured.
+LOCAL_UPLOAD_DIR = Path("/app/uploads")
 
 
 class FileService:
@@ -25,6 +30,15 @@ class FileService:
             )
         return self._client
 
+    def _store_local(self, data: bytes, filename: str, folder: str) -> str:
+        """Persist the file under /app/uploads and return an API-served URL."""
+        safe_folder = folder.replace("..", "_").strip("/")
+        target_dir = LOCAL_UPLOAD_DIR / safe_folder
+        target_dir.mkdir(parents=True, exist_ok=True)
+        key = f"{uuid.uuid4()}_{filename}"
+        (target_dir / key).write_bytes(data)
+        return f"/files/{safe_folder}/{key}"
+
     def _get_public_url(self, key: str) -> str:
         return f"https://{self._bucket}.s3.{self._region}.amazonaws.com/{key}"
 
@@ -35,9 +49,9 @@ class FileService:
         folder: str = "uploads",
         content_type: str = "application/octet-stream",
     ) -> str:
-        """Upload bytes to S3 and return public URL."""
+        """Upload bytes to S3 (or local disk as fallback) and return public URL."""
         if not self.is_configured():
-            raise RuntimeError("AWS S3 is not configured")
+            return self._store_local(data, filename, folder)
 
         key = f"{folder}/{uuid.uuid4()}_{filename}"
         client = self._get_client()
@@ -58,7 +72,8 @@ class FileService:
     ) -> str:
         """Upload a file object (from FastAPI UploadFile) to S3."""
         if not self.is_configured():
-            raise RuntimeError("AWS S3 is not configured")
+            data = await file_object.read()
+            return self._store_local(data, filename, folder)
 
         content_type, _ = mimetypes.guess_type(filename)
         content_type = content_type or "application/octet-stream"

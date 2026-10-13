@@ -47,7 +47,9 @@ class _TypingIndicatorWidgetState extends State<TypingIndicatorWidget>
 
   @override
   void dispose() {
-    for (final c in _controllers) c.dispose();
+    for (final c in _controllers) {
+      c.dispose();
+    }
     super.dispose();
   }
 

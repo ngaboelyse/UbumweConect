@@ -18,6 +18,7 @@ backend/**/__pycache__/
 # Flutter / Dart
 frontend/.dart_tool/
 frontend/build/
+frontend/android/build/
 frontend/windows/flutter/ephemeral/
 frontend/windows/firebase_cpp_sdk/
 frontend/packages/
@@ -25,5 +26,31 @@ frontend/pubspec.lock
 
 # Misc
 node_modules/
+package.json
+package-lock.json
+qa_runner.mjs
+qa_screenshot.png
+ubumwe_web_check.png
+*.backup
+pubspec.yaml.new
+build_output.txt
+build_*.txt
+build_*.log.err
+frontend/build_apk_now.bat
 firebase-credentials.json
 .env
+backend/.env
+
+# Secrets / tokens (never commit)
+*.pem
+*.tok
+
+diag_*.py
+
+# Local dev databases (defence in depth against *.db globs)
+dev_local.db
+ubumwe_local.db
+
+# OS artifacts
+Thumbs.db
+.DS_Store

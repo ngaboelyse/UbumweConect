@@ -115,6 +115,22 @@ class LocalStorageService {
     return prefs.getBool(AppConstants.keyOnboardingDone) ?? false;
   }
 
+  // ─── App preferences (raw key/value access for settings toggles) ────────
+  Future<void> setRawBool(String key, bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(key, value);
+  }
+
+  /// Returns every key/value pair in SharedPreferences (for loading settings).
+  Future<Map<String, Object>> getAllPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getKeys().fold<Map<String, Object>>({}, (acc, key) {
+      final v = prefs.get(key);
+      if (v != null) acc[key] = v;
+      return acc;
+    });
+  }
+
   // ─── Clear All ────────────────────────────────────────────
   Future<void> clearAll() async {
     final prefs = await SharedPreferences.getInstance();

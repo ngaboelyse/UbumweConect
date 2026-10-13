@@ -70,7 +70,9 @@ class MessageModel extends Equatable {
           ? UserModel.fromJson(json['sender'] as Map<String, dynamic>)
           : null,
       reactions: (json['reactions'] as List<dynamic>? ?? [])
-          .map((r) => Map<String, String>.from(r as Map))
+          .map((r) => (r as Map<String, dynamic>).map(
+                (k, v) => MapEntry(k, v?.toString() ?? ''),
+              ))
           .toList(),
     );
   }

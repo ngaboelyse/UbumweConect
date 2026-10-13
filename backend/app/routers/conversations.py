@@ -1,5 +1,5 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, desc, func, or_, cast, String
 from sqlalchemy.orm import selectinload
@@ -102,6 +102,31 @@ async def create_conversation(
 
     if conv_type == ConversationType.DIRECT and len(data.participant_ids) != 1:
         raise HTTPException(status_code=400, detail="Direct conversation requires exactly 1 participant")
+
+    # Dedup direct chats: one conversation per pair of users. Without this,
+    # starting a chat with the same person twice creates duplicate entries.
+    if conv_type == ConversationType.DIRECT:
+        other_id = data.participant_ids[0]
+        if other_id == current_user.id:
+            raise HTTPException(status_code=400, detail="Cannot start a direct chat with yourself")
+        existing = await db.execute(
+            select(Conversation)
+            .join(ConversationParticipant, ConversationParticipant.conversation_id == Conversation.id)
+            .where(
+                Conversation.type == ConversationType.DIRECT,
+                ConversationParticipant.user_id.in_([current_user.id, other_id]),
+            )
+            .group_by(Conversation.id)
+            .having(func.count(ConversationParticipant.user_id) == 2)
+        )
+        existing_conv = existing.scalar_one_or_none()
+        if existing_conv:
+            result = await db.execute(
+                select(Conversation)
+                .where(Conversation.id == existing_conv.id)
+                .options(selectinload(Conversation.participants).selectinload(ConversationParticipant.user))
+            )
+            return ConversationResponse.model_validate(result.scalar_one())
 
     conversation = Conversation(
         type=conv_type,
@@ -564,13 +589,20 @@ ALLOWED_ATTACHMENT_TYPES = {
 async def upload_attachment(
     conversation_id: uuid.UUID,
     file: UploadFile = File(...),
-    kind: str = Query(default="file", pattern=r"^(image|file|voice)$"),
+    kind_query: str = Query(default="", alias="kind", pattern=r"^(image|file|voice)?$"),
+    kind_form: str = Form(default="", alias="kind", pattern=r"^(image|file|voice)?$"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Upload a media attachment for a message. Returns the URL to send
     as `media_url` in POST /{id}/messages."""
     await _require_participant(conversation_id, db, current_user)
+
+    # Clients may send `kind` as a query param (curl/tests) or as a form
+    # field (Flutter multipart uploads). Accept either, default to "file".
+    kind = kind_query or kind_form or "file"
+    if kind not in ALLOWED_ATTACHMENT_TYPES:
+        raise HTTPException(status_code=400, detail=f"Invalid kind: {kind}")
 
     filename = file.filename or "upload.bin"
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""

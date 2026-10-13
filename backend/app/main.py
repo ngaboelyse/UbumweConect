@@ -60,10 +60,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Serve locally-stored uploads when S3 is not configured.
+try:
+    from fastapi.staticfiles import StaticFiles
+    from pathlib import Path as _Path
+    _uploads = _Path("/app/uploads")
+    if not _uploads.exists():
+        _uploads = _Path("uploads")
+    _uploads.mkdir(parents=True, exist_ok=True)
+    app.mount("/files", StaticFiles(directory=str(_uploads)), name="files")
+except Exception:  # pragma: no cover - static files are best-effort
+    pass
+
 # ─── Middleware ────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.get_cors_origins(),
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -102,6 +114,9 @@ async def health_check():
         "app": settings.APP_NAME,
         "version": settings.APP_VERSION,
         "message": "Bringing People Together Beyond Language 🌍",
+        "services": {
+            "text_translation": "available",  # OpenAI + free Google fallback
+        },
     }
 
 

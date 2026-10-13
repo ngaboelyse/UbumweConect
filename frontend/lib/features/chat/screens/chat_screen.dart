@@ -1,19 +1,25 @@
 import 'dart:async';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:record/record.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 
 import '../../../app/theme/app_colors.dart';
 import '../../../features/auth/providers/auth_provider.dart';
+import '../../calls/providers/call_controller.dart';
+import '../models/conversation_model.dart';
 import '../models/message_model.dart';
 import '../providers/chat_provider.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/typing_indicator.dart';
 import '../../../shared/services/websocket_service.dart';
+import '../../../shared/services/api_service.dart';
 import '../../../shared/widgets/avatar_widget.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
@@ -34,6 +40,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   String? _replyToId;
   String? _replyToContent;
   WebSocketService? _ws;
+  final List<Uint8List> _webChunks = [];
+  StreamSubscription<Uint8List>? _streamSub;
 
   @override
   void initState() {
@@ -134,6 +142,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
+    final replyToId = _replyToId; // capture BEFORE clearing state
     _messageController.clear();
     setState(() { _replyToId = null; _replyToContent = null; });
 
@@ -141,7 +150,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       await ref.read(messagesProvider(widget.conversationId).notifier).sendMessage(
         content: text,
         type: 'text',
-        replyToId: _replyToId,
+        replyToId: replyToId,
       );
       _scrollToBottom();
     } catch (e) {
@@ -154,18 +163,126 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   Future<void> _startRecording() async {
-    if (!await _recorder.hasPermission()) return;
-    await _recorder.start(const RecordConfig(), path: '/tmp/voice_${DateTime.now().millisecondsSinceEpoch}.m4a');
-    setState(() => _isRecording = true);
+    try {
+      if (!await _recorder.hasPermission()) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Microphone permission denied. Enable it in app settings.'),
+              backgroundColor: AppColors.error,
+            ),
+          );
+        }
+        return;
+      }
+      if (kIsWeb) {
+        // Web: stream the recording into memory instead of a file path.
+        // path_provider has no web implementation (MissingPluginException).
+        _webChunks.clear();
+        final stream = await _recorder.startStream(const RecordConfig(
+          encoder: AudioEncoder.pcm16bits,
+          numChannels: 1,
+          sampleRate: 16000,
+        ));
+        _streamSub = stream.listen(_webChunks.add);
+      } else {
+        final tempDir = await getTemporaryDirectory();
+        final path = '${tempDir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+        await _recorder.start(const RecordConfig(), path: path);
+      }
+      if (mounted) setState(() => _isRecording = true);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not start recording: $e'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _stopRecording() async {
-    final path = await _recorder.stop();
-    setState(() => _isRecording = false);
-    if (path != null && mounted) {
-      await _sendAttachment(path, kind: 'voice', caption: 'Voice message');
+    try {
+      if (kIsWeb) {
+        await _streamSub?.cancel();
+        _streamSub = null;
+        await _recorder.stop();
+        if (mounted) setState(() => _isRecording = false);
+        // Concatenate PCM chunks and encode a WAV container.
+        final pcm = _webChunks.fold<List<int>>(<int>[], (acc, c) => acc..addAll(c));
+        final bytes = Uint8List.fromList(pcm);
+        final wav = _encodeWav(bytes, sampleRate: 16000, numChannels: 1, bitsPerSample: 16);
+        if (mounted) {
+          await _sendBytes(wav, 'voice_note.wav', kind: 'voice', caption: 'Voice message');
+        }
+        return;
+      }
+      final path = await _recorder.stop();
+      if (mounted) setState(() => _isRecording = false);
+      if (path != null && mounted) {
+        await _sendAttachment(path, kind: 'voice', caption: 'Voice message');
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to finish recording: $e'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
     }
   }
+
+  /// Send a voice note from in-memory bytes (used on web, where no file path exists).
+  Future<void> _sendBytes(Uint8List bytes, String fileName, {required String kind, required String caption}) async {
+    try {
+      await ref.read(messagesProvider(widget.conversationId).notifier).sendAttachment(
+            filePath: fileName,
+            kind: kind,
+            caption: caption,
+            replyToId: _replyToId,
+            fileBytes: bytes,
+          );
+      setState(() { _replyToId = null; _replyToContent = null; });
+      _scrollToBottom();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to send attachment: $e'), backgroundColor: AppColors.error),
+        );
+      }
+    }
+  }
+
+  /// Wrap raw PCM data in a WAV container.
+  Uint8List _encodeWav(Uint8List pcm, {required int sampleRate, required int numChannels, required int bitsPerSample}) {
+    final byteRate = sampleRate * numChannels * bitsPerSample ~/ 8;
+    final blockAlign = numChannels * bitsPerSample ~/ 8;
+    final header = BytesBuilder();
+    header.add('RIFF'.codeUnits);
+    header.add(_u32(36 + pcm.length));
+    header.add('WAVE'.codeUnits);
+    header.add('fmt '.codeUnits);
+    header.add(_u32(16));
+    header.add(_u16(1)); // PCM
+    header.add(_u16(numChannels));
+    header.add(_u32(sampleRate));
+    header.add(_u32(byteRate));
+    header.add(_u16(blockAlign));
+    header.add(_u16(bitsPerSample));
+    header.add('data'.codeUnits);
+    header.add(_u32(pcm.length));
+    final out = BytesBuilder();
+    out.add(header.takeBytes());
+    out.add(pcm);
+    return out.takeBytes();
+  }
+
+  Uint8List _u32(int v) => Uint8List(4)..[0] = v & 0xFF..[1] = (v >> 8) & 0xFF..[2] = (v >> 16) & 0xFF..[3] = (v >> 24) & 0xFF;
+  Uint8List _u16(int v) => Uint8List(2)..[0] = v & 0xFF..[1] = (v >> 8) & 0xFF;
 
   Future<void> _sendAttachment(String filePath, {required String kind, required String caption}) async {
     try {
@@ -198,10 +315,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   Future<void> _pickFile() async {
-    final result = await FilePicker.platform.pickFiles();
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.any,
+      // withData loads the bytes into memory, which is required on web where
+      // picked files have no real filesystem path.
+      withData: true,
+    );
     final file = result?.files.single;
-    if (file?.path != null && mounted) {
-      await _sendAttachment(file!.path!, kind: 'file', caption: file.name);
+    if (file == null || !mounted) return;
+    if (file.bytes != null) {
+      await _sendBytes(file.bytes!, file.name, kind: 'file', caption: file.name);
+    } else if (file.path != null) {
+      await _sendAttachment(file.path!, kind: 'file', caption: file.name);
     }
   }
 
@@ -273,6 +398,63 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     );
   }
 
+  /// Creates the call on the backend and opens the outgoing-call screen.
+  Future<void> _startCall(CallType type) async {
+    final currentUser = ref.read(currentUserProvider);
+    final convs = ref.read(conversationsProvider).valueOrNull ?? [];
+    ConversationModel? conv;
+    for (final c in convs) {
+      if (c.id == widget.conversationId) {
+        conv = c;
+        break;
+      }
+    }
+    if (conv == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Still loading conversation… try again in a moment'), backgroundColor: AppColors.error),
+        );
+      }
+      return;
+    }
+
+    // For direct conversations, find the other participant.
+    ParticipantModel? peer;
+    for (final p in conv.participants) {
+      if (p.userId != (currentUser?.id ?? '')) {
+        peer = p;
+        break;
+      }
+    }
+    if (peer == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Cannot call in this conversation'), backgroundColor: AppColors.error),
+        );
+      }
+      return;
+    }
+
+    final callId = await ref.read(callControllerProvider.notifier).createCall(
+          conversationId: conv.id,
+          peerId: peer.userId,
+          peerName: conv.getDisplayName(currentUser?.id ?? ''),
+          peerAvatar: conv.getDisplayAvatar(currentUser?.id ?? ''),
+          type: type,
+        );
+    if (callId == null || !mounted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not start the call — is the server running?'), backgroundColor: AppColors.error),
+        );
+      }
+      return;
+    }
+
+    final route = type == CallType.video ? '/call/video' : '/call/voice';
+    if (mounted) context.push('$route/$callId');
+  }
+
   AppBar _buildAppBar(Set<String> typingUsers) {
     final conversationsAsync = ref.watch(conversationsProvider);
     final currentUser = ref.watch(currentUserProvider);
@@ -316,9 +498,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ],
       ),
       actions: [
-        IconButton(icon: const Icon(Icons.videocam_outlined), onPressed: () {}),
-        IconButton(icon: const Icon(Icons.call_outlined), onPressed: () {}),
-        IconButton(icon: const Icon(Icons.more_vert), onPressed: () {}),
+        IconButton(icon: const Icon(Icons.videocam_outlined), onPressed: () => _startCall(CallType.video)),
+        IconButton(icon: const Icon(Icons.call_outlined), onPressed: () => _startCall(CallType.voice)),
+        IconButton(icon: const Icon(Icons.more_vert), onPressed: _showChatMenu),
       ],
     );
   }
@@ -610,6 +792,139 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   bool _isSameDay(DateTime a, DateTime b) => a.year == b.year && a.month == b.month && a.day == b.day;
+
+  /// ⋮ menu in the chat AppBar: conversation info, in-chat search, view contact.
+  void _showChatMenu() {
+    final conversationsAsync = ref.watch(conversationsProvider);
+    final currentUser = ref.watch(currentUserProvider);
+    conversationsAsync.whenData((convs) {
+      final conv = convs.where((c) => c.id == widget.conversationId).firstOrNull;
+      if (conv == null || !mounted) return;
+      final peer = conv.participants.firstWhere(
+        (p) => p.userId != (currentUser?.id ?? ''),
+        orElse: () => conv.participants.first,
+      );
+
+      showModalBottomSheet(
+        context: context,
+        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+        builder: (sheetCtx) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(margin: const EdgeInsets.symmetric(vertical: 12), width: 40, height: 4, decoration: BoxDecoration(color: AppColors.divider, borderRadius: BorderRadius.circular(2))),
+              ListTile(
+                leading: const Icon(Icons.person_search_outlined),
+                title: const Text('View Contact', style: TextStyle(fontFamily: 'Poppins')),
+                onTap: () {
+                  Navigator.pop(sheetCtx);
+                  context.push('/user/${peer.userId}');
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.search),
+                title: const Text('Search Messages', style: TextStyle(fontFamily: 'Poppins')),
+                onTap: () {
+                  Navigator.pop(sheetCtx);
+                  _showMessageSearch();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.language),
+                title: const Text('Language Settings', style: TextStyle(fontFamily: 'Poppins')),
+                onTap: () {
+                  Navigator.pop(sheetCtx);
+                  context.push('/settings/language');
+                },
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.help_outline),
+                title: const Text('Help & Support', style: TextStyle(fontFamily: 'Poppins')),
+                onTap: () {
+                  Navigator.pop(sheetCtx);
+                  context.push('/help');
+                },
+              ),
+            ],
+          ),
+        ),
+      );
+    });
+  }
+
+  /// Search messages in this conversation via the backend endpoint.
+  void _showMessageSearch() {
+    final controller = TextEditingController();
+    List<dynamic> results = [];
+    bool searching = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (sheetCtx, setSheetState) => Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(sheetCtx).viewInsets.bottom),
+          child: SizedBox(
+            height: MediaQuery.of(sheetCtx).size.height * 0.7,
+            child: Column(
+              children: [
+                Container(margin: const EdgeInsets.symmetric(vertical: 12), width: 40, height: 4, decoration: BoxDecoration(color: AppColors.divider, borderRadius: BorderRadius.circular(2))),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: TextField(
+                    controller: controller,
+                    autofocus: true,
+                    decoration: const InputDecoration(
+                      hintText: 'Search in this chat...',
+                      prefixIcon: Icon(Icons.search),
+                      border: OutlineInputBorder(),
+                    ),
+                    onSubmitted: (q) async {
+                      if (q.trim().length < 2) return;
+                      setSheetState(() => searching = true);
+                      try {
+                        final data = await ref.read(apiServiceProvider).getList(
+                              '/conversations/${widget.conversationId}/messages/search',
+                              params: {'q': q.trim()},
+                            );
+                        results = data is List ? data : [];
+                      } catch (_) {
+                        results = [];
+                      }
+                      setSheetState(() => searching = false);
+                    },
+                  ),
+                ),
+                const SizedBox(height: 8),
+                if (searching)
+                  const Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()),
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: results.length,
+                    itemBuilder: (ctx, i) {
+                      final m = results[i] as Map<String, dynamic>;
+                      return ListTile(
+                        leading: const Icon(Icons.chat_bubble_outline),
+                        title: Text(
+                          m['original_content']?.toString() ?? '',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontFamily: 'Poppins', fontSize: 14),
+                        ),
+                        onTap: () => Navigator.pop(sheetCtx),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _buildDateSeparator(DateTime date) {
     final now = DateTime.now();

@@ -9,6 +9,12 @@
 # packages, and plugins designed to encourage good coding practices.
 include: package:flutter_lints/flutter.yaml
 
+# The vendored flutter_webrtc package ships with example/sample code that is
+# not part of the app build; exclude it from analysis.
+analyzer:
+  exclude:
+    - packages/**
+
 linter:
   # The lint rules applied to this project can be customized in the
   # section below to disable rules from the `package:flutter_lints/flutter.yaml`

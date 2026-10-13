@@ -173,7 +173,11 @@ class _NewConversationScreenState extends ConsumerState<NewConversationScreen> {
                       if (!_isGroup && !isSelected) {
                         setState(() { _selected.clear(); _selected.add(contact); });
                       } else {
-                        setState(() { if (isSelected) _selected.remove(contact); else _selected.add(contact); });
+                        setState(() { if (isSelected) {
+                          _selected.remove(contact);
+                        } else {
+                          _selected.add(contact);
+                        } });
                       }
                     },
                   );

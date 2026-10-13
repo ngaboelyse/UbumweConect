@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../../../app/theme/app_colors.dart';
+import '../../auth/providers/auth_provider.dart';
+import '../../chat/providers/chat_provider.dart';
+import '../providers/call_controller.dart';
 
 class VideoCallScreen extends ConsumerStatefulWidget {
   final String callId;
@@ -16,43 +19,54 @@ class VideoCallScreen extends ConsumerStatefulWidget {
 class _VideoCallScreenState extends ConsumerState<VideoCallScreen> {
   bool _isMuted = false;
   bool _isCameraOn = true;
-  bool _showCaptions = true;
   bool _showControls = true;
   String _duration = '00:00';
-  String _liveCaption = '';
   Timer? _durationTimer;
   Timer? _controlsTimer;
   int _seconds = 0;
+
+  final _localRenderer = RTCVideoRenderer();
+  final _remoteRenderer = RTCVideoRenderer();
+  bool _renderersReady = false;
+
+  CallController get _call => ref.read(callControllerProvider.notifier);
 
   @override
   void initState() {
     super.initState();
     _startTimer();
-    _simulateCaptions();
     _scheduleHideControls();
+    _initRenderers();
+  }
+
+  Future<void> _initRenderers() async {
+    await _localRenderer.initialize();
+    await _remoteRenderer.initialize();
+    if (!mounted) return;
+    setState(() => _renderersReady = true);
+    // Attach current streams and keep following future ones.
+    _localRenderer.srcObject = _call.localStream.value;
+    _remoteRenderer.srcObject = _call.remoteStream.value;
+    _call.localStream.addListener(_attachLocal);
+    _call.remoteStream.addListener(_attachRemote);
+  }
+
+  void _attachLocal() {
+    if (mounted) _localRenderer.srcObject = _call.localStream.value;
+  }
+
+  void _attachRemote() {
+    if (mounted) _remoteRenderer.srcObject = _call.remoteStream.value;
   }
 
   void _startTimer() {
     _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final phase = ref.read(callControllerProvider)?.phase;
+      if (phase != CallPhase.active) return;
       _seconds++;
       final m = (_seconds ~/ 60).toString().padLeft(2, '0');
       final s = (_seconds % 60).toString().padLeft(2, '0');
       if (mounted) setState(() => _duration = '$m:$s');
-    });
-  }
-
-  void _simulateCaptions() {
-    final samples = [
-      'Bonjour, comment ça va?',
-      '(Translated: Hello, how are you?)',
-      'Je suis très bien, merci!',
-      '(Translated: I am very well, thank you!)',
-    ];
-    int i = 0;
-    Timer.periodic(const Duration(seconds: 5), (t) {
-      if (!mounted) { t.cancel(); return; }
-      setState(() => _liveCaption = samples[i % samples.length]);
-      i++;
     });
   }
 
@@ -72,32 +86,56 @@ class _VideoCallScreenState extends ConsumerState<VideoCallScreen> {
   void dispose() {
     _durationTimer?.cancel();
     _controlsTimer?.cancel();
+    _call.localStream.removeListener(_attachLocal);
+    _call.remoteStream.removeListener(_attachRemote);
+    _localRenderer.srcObject = null;
+    _remoteRenderer.srcObject = null;
+    _localRenderer.dispose();
+    _remoteRenderer.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final session = ref.watch(callControllerProvider);
+    // The controller already ended the call and popped the route.
+    if (session == null) return const SizedBox.shrink();
+
+    final currentUser = ref.watch(currentUserProvider);
+    final conversationsAsync = ref.watch(conversationsProvider);
+    String peerName = session.peerName;
+    conversationsAsync.whenData((convs) {
+      final conv = convs.where((c) => c.id == session.conversationId).firstOrNull;
+      if (conv != null) peerName = conv.getDisplayName(currentUser?.id ?? '');
+    });
+
+    final hasRemoteVideo = _renderersReady && _remoteRenderer.srcObject != null;
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: GestureDetector(
         onTap: _onTap,
         child: Stack(
           children: [
-            // Remote video (full screen placeholder)
+            // Remote video (full screen)
             Container(
               width: double.infinity,
               height: double.infinity,
               color: const Color(0xFF1A1A2E),
-              child: const Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    CircleAvatar(radius: 60, backgroundColor: Color(0xFF2D2D44), child: Text('U', style: TextStyle(fontSize: 48, color: Colors.white, fontFamily: 'Poppins'))),
-                    SizedBox(height: 16),
-                    Text('Contact Name', style: TextStyle(color: Colors.white54, fontSize: 16, fontFamily: 'Poppins')),
-                  ],
-                ),
-              ),
+              child: hasRemoteVideo
+                  ? RTCVideoView(_remoteRenderer, objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover)
+                  : Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(peerName.isNotEmpty ? peerName[0].toUpperCase() : 'U', style: const TextStyle(fontSize: 48, color: Colors.white, fontFamily: 'Poppins')),
+                          const SizedBox(height: 16),
+                          Text(peerName, style: const TextStyle(color: Colors.white54, fontSize: 16, fontFamily: 'Poppins')),
+                          const SizedBox(height: 8),
+                          Text(session.phase == CallPhase.active ? 'Connected' : 'Ringing...', style: const TextStyle(color: Colors.white38, fontSize: 13, fontFamily: 'Poppins')),
+                        ],
+                      ),
+                    ),
             ),
 
             // Self video (PiP - top right)
@@ -114,8 +152,8 @@ class _VideoCallScreenState extends ConsumerState<VideoCallScreen> {
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(10),
-                  child: _isCameraOn
-                      ? const Center(child: Icon(Icons.videocam, color: Colors.white54, size: 32))
+                  child: _isCameraOn && _renderersReady && _localRenderer.srcObject != null
+                      ? RTCVideoView(_localRenderer, mirror: true)
                       : const Center(child: Icon(Icons.videocam_off, color: Colors.white38, size: 32)),
                 ),
               ),
@@ -143,7 +181,7 @@ class _VideoCallScreenState extends ConsumerState<VideoCallScreen> {
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                       child: Row(
                         children: [
-                          const Text('Contact Name', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600, fontFamily: 'Poppins')),
+                          Text(peerName, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600, fontFamily: 'Poppins')),
                           const SizedBox(width: 8),
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -152,8 +190,6 @@ class _VideoCallScreenState extends ConsumerState<VideoCallScreen> {
                           ),
                           const Spacer(),
                           const Icon(Icons.signal_cellular_alt, color: Colors.white70, size: 18),
-                          const SizedBox(width: 4),
-                          const Text('HD', style: TextStyle(color: Colors.white70, fontSize: 11, fontFamily: 'Poppins')),
                         ],
                       ),
                     ),
@@ -161,39 +197,6 @@ class _VideoCallScreenState extends ConsumerState<VideoCallScreen> {
                 ),
               ),
             ),
-
-            // Live captions
-            if (_showCaptions && _liveCaption.isNotEmpty)
-              Positioned(
-                bottom: 120,
-                left: 16,
-                right: 16,
-                child: AnimatedOpacity(
-                  opacity: _liveCaption.isNotEmpty ? 1.0 : 0.0,
-                  duration: const Duration(milliseconds: 300),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.7),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Row(
-                          children: [
-                            Icon(Icons.closed_caption, color: Colors.white60, size: 14),
-                            SizedBox(width: 4),
-                            Text('Live Captions (English)', style: TextStyle(color: Colors.white60, fontSize: 11, fontFamily: 'Poppins')),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        Text(_liveCaption, style: const TextStyle(color: Colors.white, fontSize: 14, fontFamily: 'Poppins', height: 1.4)),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
 
             // Bottom controls
             AnimatedOpacity(
@@ -221,16 +224,19 @@ class _VideoCallScreenState extends ConsumerState<VideoCallScreen> {
                           _VideoCallButton(
                             icon: _isMuted ? Icons.mic_off : Icons.mic,
                             label: _isMuted ? 'Unmute' : 'Mute',
-                            onTap: () => setState(() => _isMuted = !_isMuted),
+                            onTap: () {
+                              _call.toggleMute();
+                              setState(() => _isMuted = !_isMuted);
+                            },
                             active: _isMuted,
                           ),
                           _VideoCallButton(
                             icon: Icons.flip_camera_ios_outlined,
                             label: 'Flip',
-                            onTap: () {},
+                            onTap: () => _call.switchCamera(),
                           ),
                           GestureDetector(
-                            onTap: () => context.pop(),
+                            onTap: () => _call.endCall(),
                             child: Container(
                               width: 64, height: 64,
                               decoration: const BoxDecoration(color: AppColors.error, shape: BoxShape.circle),
@@ -240,14 +246,11 @@ class _VideoCallScreenState extends ConsumerState<VideoCallScreen> {
                           _VideoCallButton(
                             icon: _isCameraOn ? Icons.videocam : Icons.videocam_off,
                             label: 'Camera',
-                            onTap: () => setState(() => _isCameraOn = !_isCameraOn),
+                            onTap: () {
+                              _call.toggleCamera();
+                              setState(() => _isCameraOn = !_isCameraOn);
+                            },
                             active: !_isCameraOn,
-                          ),
-                          _VideoCallButton(
-                            icon: Icons.closed_caption,
-                            label: 'Captions',
-                            onTap: () => setState(() => _showCaptions = !_showCaptions),
-                            active: _showCaptions,
                           ),
                         ],
                       ),

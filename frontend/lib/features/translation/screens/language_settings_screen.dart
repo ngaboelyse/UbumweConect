@@ -28,6 +28,11 @@ class _LanguageSettingsScreenState extends ConsumerState<LanguageSettingsScreen>
       'english': 'Hello! How are you?',
       'french': 'Bonjour! Comment ça va?',
       'swahili': 'Habari! Habari gani?',
+      'spanish': '¡Hola! ¿Cómo estás?',
+      'arabic': 'مرحبا! كيف حالك؟',
+      'portuguese': 'Olá! Como está?',
+      'german': 'Hallo! Wie geht es dir?',
+      'chinese': '你好！你好吗？',
     };
 
     return Scaffold(

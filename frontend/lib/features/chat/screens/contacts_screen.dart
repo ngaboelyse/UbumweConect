@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../app/theme/app_colors.dart';
 import '../../../features/auth/models/user_model.dart';
+import '../providers/chat_provider.dart';
 import '../../../shared/services/api_service.dart';
 import '../../../shared/widgets/avatar_widget.dart';
 
@@ -72,16 +73,19 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
                     : contacts.where((c) => c.displayName.toLowerCase().contains(_searchQuery.toLowerCase()) || c.username.toLowerCase().contains(_searchQuery.toLowerCase())).toList();
 
                 if (filtered.isEmpty) {
-                  return const Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text('👥', style: TextStyle(fontSize: 56)),
-                        SizedBox(height: 12),
-                        Text('No contacts yet', style: TextStyle(fontSize: 16, color: AppColors.textSecondary, fontFamily: 'Poppins')),
-                        SizedBox(height: 4),
-                        Text('Add people to start chatting', style: TextStyle(fontSize: 13, color: AppColors.textHint, fontFamily: 'Poppins')),
-                      ],
+                  return Center(
+                    child: SizedBox(
+                      width: double.maxFinite,
+                      child: const Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text('👥', style: TextStyle(fontSize: 56)),
+                          SizedBox(height: 12),
+                          Text('No contacts yet', style: TextStyle(fontSize: 16, color: AppColors.textSecondary, fontFamily: 'Poppins')),
+                          SizedBox(height: 4),
+                          Text('Add people to start chatting', style: TextStyle(fontSize: 13, color: AppColors.textHint, fontFamily: 'Poppins')),
+                        ],
+                      ),
                     ),
                   );
                 }
@@ -89,7 +93,8 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
                 // Group by first letter
                 final grouped = <String, List<UserModel>>{};
                 for (final c in filtered) {
-                  final key = c.displayName[0].toUpperCase();
+                  final name = c.displayName.trim();
+                  final key = name.isEmpty ? '#' : name[0].toUpperCase();
                   grouped.putIfAbsent(key, () => []).add(c);
                 }
                 final keys = grouped.keys.toList()..sort();
@@ -132,7 +137,7 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
   }
 }
 
-class _ContactTile extends StatelessWidget {
+class _ContactTile extends ConsumerWidget {
   final UserModel contact;
   const _ContactTile({required this.contact});
 
@@ -141,8 +146,24 @@ class _ContactTile extends StatelessWidget {
     return flags[lang] ?? '🌐';
   }
 
+  Future<void> _startDirectChat(BuildContext context, WidgetRef ref) async {
+    final navigator = GoRouter.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final conversation = await ref.read(conversationsProvider.notifier).createConversation(
+        participantIds: [contact.id],
+        type: 'direct',
+      );
+      navigator.push('/chat/${conversation.id}');
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not start chat: $e'), backgroundColor: AppColors.error),
+      );
+    }
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       leading: UserAvatar(displayName: contact.displayName, avatarUrl: contact.avatarUrl, isOnline: contact.isOnline, size: AvatarSize.medium),
@@ -154,8 +175,9 @@ class _ContactTile extends StatelessWidget {
           Text(_getLanguageFlag(contact.preferredLanguage), style: const TextStyle(fontSize: 18)),
           const SizedBox(width: 8),
           IconButton(
+            tooltip: 'Chat',
             icon: const Icon(Icons.chat_outlined, color: AppColors.primary),
-            onPressed: () => context.push('/user/${contact.id}'),
+            onPressed: () => _startDirectChat(context, ref),
           ),
         ],
       ),
@@ -216,7 +238,11 @@ class _AddContactSheetState extends ConsumerState<_AddContactSheet> {
             ..._results.map((r) {
               final user = r as Map<String, dynamic>;
               return ListTile(
-                leading: const CircleAvatar(child: Icon(Icons.person)),
+                leading: UserAvatar(
+                  displayName: user['display_name']?.toString() ?? '',
+                  avatarUrl: user['avatar_url']?.toString(),
+                  size: AvatarSize.medium,
+                ),
                 title: Text(user['display_name']?.toString() ?? '', style: const TextStyle(fontFamily: 'Poppins')),
                 subtitle: Text('@${user['username'] ?? ''}', style: const TextStyle(fontFamily: 'Poppins')),
                 trailing: ElevatedButton(

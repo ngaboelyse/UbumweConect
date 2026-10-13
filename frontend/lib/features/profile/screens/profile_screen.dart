@@ -136,7 +136,7 @@ class ProfileScreen extends ConsumerWidget {
                   _MenuItem(icon: Icons.translate_outlined, title: 'Language Settings', onTap: () => context.push('/settings/language')),
                   _MenuItem(icon: Icons.notifications_outlined, title: 'Notifications', onTap: () => context.push('/settings')),
                   _MenuItem(icon: Icons.lock_outline, title: 'Privacy & Security', onTap: () => context.push('/settings')),
-                  _MenuItem(icon: Icons.help_outline, title: 'Help & Support', onTap: () {}),
+                  _MenuItem(icon: Icons.help_outline, title: 'Help & Support', onTap: () => context.push('/help')),
                   _MenuItem(icon: Icons.info_outline, title: 'About Ubumwe Connect', onTap: () => _showAbout(context)),
                   const SizedBox(height: 8),
                   _MenuItem(

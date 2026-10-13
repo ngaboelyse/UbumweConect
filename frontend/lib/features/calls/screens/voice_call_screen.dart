@@ -5,6 +5,10 @@ import 'package:go_router/go_router.dart';
 
 import '../../../app/theme/app_colors.dart';
 import '../../../shared/widgets/avatar_widget.dart';
+import '../../auth/providers/auth_provider.dart';
+import '../../chat/providers/chat_provider.dart';
+import '../providers/call_controller.dart';
+import '../widgets/remote_audio_player.dart';
 
 class VoiceCallScreen extends ConsumerStatefulWidget {
   final String callId;
@@ -17,61 +21,73 @@ class VoiceCallScreen extends ConsumerStatefulWidget {
 class _VoiceCallScreenState extends ConsumerState<VoiceCallScreen> {
   bool _isMuted = false;
   bool _isSpeakerOn = false;
-  bool _showSubtitles = true;
-  String _callStatus = 'Connecting...';
+  bool _translationOn = false;
   String _duration = '00:00';
-  String _liveSubtitle = '';
   Timer? _durationTimer;
   int _seconds = 0;
+
+  // On web, remote audio only plays when attached to an <audio> element
+  // (flutter_webrtc does that inside RTCVideoRenderer). No-op on mobile.
+  final RemoteAudioPlayer _remoteAudio = RemoteAudioPlayerImpl();
+
+  CallController get _call => ref.read(callControllerProvider.notifier);
 
   @override
   void initState() {
     super.initState();
-    _startCall();
-  }
-
-  void _startCall() {
-    Future.delayed(const Duration(seconds: 2), () {
-      if (mounted) {
-        setState(() => _callStatus = 'Connected');
-        _startTimer();
-        _simulateSubtitles();
-      }
-    });
-  }
-
-  void _startTimer() {
+    // The duration timer only ticks once the call is actually active.
     _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final phase = ref.read(callControllerProvider)?.phase;
+      if (phase != CallPhase.active) return;
       _seconds++;
       final m = (_seconds ~/ 60).toString().padLeft(2, '0');
       final s = (_seconds % 60).toString().padLeft(2, '0');
       if (mounted) setState(() => _duration = '$m:$s');
     });
+    // Attach now in case the call was already connected when this screen
+    // opened (e.g. the callee tapped Accept).
+    _remoteAudio.setStream(_call.remoteStream.value);
+    _call.remoteStream.addListener(_onRemoteStream);
   }
 
-  void _simulateSubtitles() {
-    final samples = [
-      'Muraho! Amakuru yawe?',
-      '(Translated: Hello! How are you?)',
-      'Ndi meza, urakoze!',
-      '(Translated: I\'m fine, thank you!)',
-    ];
-    int i = 0;
-    Timer.periodic(const Duration(seconds: 4), (t) {
-      if (!mounted) { t.cancel(); return; }
-      setState(() => _liveSubtitle = samples[i % samples.length]);
-      i++;
-    });
+  void _onRemoteStream() {
+    _remoteAudio.setStream(_call.remoteStream.value);
   }
 
   @override
   void dispose() {
     _durationTimer?.cancel();
+    _call.remoteStream.removeListener(_onRemoteStream);
+    _remoteAudio.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final session = ref.watch(callControllerProvider);
+    // The controller already ended the call and popped the route.
+    if (session == null) return const SizedBox.shrink();
+
+    final currentUser = ref.watch(currentUserProvider);
+    final conversationsAsync = ref.watch(conversationsProvider);
+    String peerName = session.peerName;
+    String? peerAvatar = session.peerAvatar;
+    conversationsAsync.whenData((convs) {
+      final conv = convs.where((c) => c.id == session.conversationId).firstOrNull;
+      if (conv != null) {
+        peerName = conv.getDisplayName(currentUser?.id ?? '');
+        peerAvatar = conv.getDisplayAvatar(currentUser?.id ?? '');
+      }
+    });
+
+    final statusText = switch (session.phase) {
+      CallPhase.outgoing => 'Ringing...',
+      CallPhase.incoming => 'Incoming...',
+      CallPhase.active => 'Connected',
+      CallPhase.ended => session.error ?? 'Call ended',
+      _ => 'Connecting...',
+    };
+
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(gradient: AppColors.callGradient),
@@ -97,47 +113,13 @@ class _VoiceCallScreenState extends ConsumerState<VoiceCallScreen> {
               const Spacer(),
 
               // Caller info
-              const UserAvatar(displayName: 'Contact Name', size: AvatarSize.xlarge),
+              UserAvatar(displayName: peerName, avatarUrl: peerAvatar, size: AvatarSize.xlarge),
               const SizedBox(height: 20),
-              const Text('Contact Name', style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w700, fontFamily: 'Poppins')),
+              Text(peerName, style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w700, fontFamily: 'Poppins')),
               const SizedBox(height: 8),
-              Text(_callStatus, style: const TextStyle(color: Colors.white60, fontSize: 16, fontFamily: 'Poppins')),
+              Text(session.error ?? statusText, style: const TextStyle(color: Colors.white60, fontSize: 16, fontFamily: 'Poppins')),
 
               const Spacer(),
-
-              // Live subtitle box
-              if (_showSubtitles && _liveSubtitle.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-                  child: AnimatedOpacity(
-                    opacity: _liveSubtitle.isNotEmpty ? 1.0 : 0.0,
-                    duration: const Duration(milliseconds: 300),
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.12),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: Colors.white24),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: const [
-                              Icon(Icons.closed_caption, color: Colors.white70, size: 16),
-                              SizedBox(width: 6),
-                              Text('Live Subtitle', style: TextStyle(color: Colors.white70, fontSize: 11, fontFamily: 'Poppins')),
-                            ],
-                          ),
-                          const SizedBox(height: 6),
-                          Text(_liveSubtitle, style: const TextStyle(color: Colors.white, fontSize: 15, fontFamily: 'Poppins', height: 1.4)),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-
-              const SizedBox(height: 16),
 
               // Controls
               Padding(
@@ -148,18 +130,37 @@ class _VoiceCallScreenState extends ConsumerState<VoiceCallScreen> {
                     _CallButton(
                       icon: _isMuted ? Icons.mic_off : Icons.mic,
                       label: _isMuted ? 'Unmute' : 'Mute',
-                      onTap: () => setState(() => _isMuted = !_isMuted),
+                      onTap: () {
+                        _call.toggleMute();
+                        setState(() => _isMuted = !_isMuted);
+                      },
                       active: _isMuted,
                     ),
                     _CallButton(
                       icon: _isSpeakerOn ? Icons.volume_up : Icons.volume_down,
                       label: 'Speaker',
-                      onTap: () => setState(() => _isSpeakerOn = !_isSpeakerOn),
+                      onTap: () {
+                        _call.toggleSpeaker();
+                        setState(() => _isSpeakerOn = !_isSpeakerOn);
+                      },
                       active: _isSpeakerOn,
+                    ),
+                    _CallButton(
+                      icon: Icons.translate,
+                      label: 'Translate',
+                      onTap: () {
+                        if (_translationOn) {
+                          _call.stopVoiceTranslation();
+                        } else {
+                          _call.startVoiceTranslation();
+                        }
+                        setState(() => _translationOn = !_translationOn);
+                      },
+                      active: _translationOn,
                     ),
                     // End call (large red)
                     GestureDetector(
-                      onTap: () => context.pop(),
+                      onTap: () => _call.endCall(),
                       child: Container(
                         width: 72, height: 72,
                         decoration: const BoxDecoration(color: AppColors.error, shape: BoxShape.circle),
@@ -167,15 +168,9 @@ class _VoiceCallScreenState extends ConsumerState<VoiceCallScreen> {
                       ),
                     ),
                     _CallButton(
-                      icon: Icons.closed_caption,
-                      label: 'Subtitles',
-                      onTap: () => setState(() => _showSubtitles = !_showSubtitles),
-                      active: _showSubtitles,
-                    ),
-                    _CallButton(
                       icon: Icons.videocam_outlined,
                       label: 'Video',
-                      onTap: () {},
+                      onTap: () => context.pushReplacement('/call/video/${widget.callId}'),
                     ),
                   ],
                 ),

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -19,6 +20,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
   late Animation<double> _fadeAnimation;
   late Animation<double> _scaleAnimation;
   late Animation<Offset> _slideAnimation;
+  Timer? _navTimer;
 
   @override
   void initState() {
@@ -41,11 +43,12 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
 
     _controller.forward();
-    _navigate();
+    // Held as a cancellable Timer (not Future.delayed) so it is cleaned up in
+    // dispose() — otherwise it outlives the widget and breaks tests.
+    _navTimer = Timer(const Duration(milliseconds: 2800), _navigate);
   }
 
   Future<void> _navigate() async {
-    await Future.delayed(const Duration(milliseconds: 2800));
     if (!mounted) return;
 
     final storage = ref.read(localStorageServiceProvider);
@@ -64,6 +67,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
 
   @override
   void dispose() {
+    _navTimer?.cancel();
     _controller.dispose();
     super.dispose();
   }
@@ -85,10 +89,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                 child: FadeTransition(
                   opacity: _fadeAnimation,
                   child: Container(
-                    width: 120,
-                    height: 120,
+                    width: 128,
+                    height: 128,
                     decoration: BoxDecoration(
-                      color: Colors.white,
                       borderRadius: BorderRadius.circular(32),
                       boxShadow: [
                         BoxShadow(
@@ -98,15 +101,11 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                         ),
                       ],
                     ),
-                    child: const Center(
-                      child: Text(
-                        'U',
-                        style: TextStyle(
-                          fontSize: 64,
-                          fontWeight: FontWeight.w800,
-                          color: AppColors.primary,
-                          fontFamily: 'Poppins',
-                        ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(32),
+                      child: Image.asset(
+                        'assets/images/ubumwe.png',
+                        fit: BoxFit.cover,
                       ),
                     ),
                   ),

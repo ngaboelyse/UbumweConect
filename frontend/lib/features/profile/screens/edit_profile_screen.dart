@@ -11,6 +11,8 @@ import '../../../core/constants/app_constants.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../../shared/services/api_service.dart';
 
+import '../../../shared/widgets/avatar_widget.dart' show resolveMediaUrl;
+
 class EditProfileScreen extends ConsumerStatefulWidget {
   const EditProfileScreen({super.key});
 
@@ -128,7 +130,9 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                         backgroundColor: AppColors.primary.withOpacity(0.1),
                         backgroundImage: _avatarFile != null
                             ? FileImage(_avatarFile!)
-                            : (user?.avatarUrl != null ? NetworkImage(user!.avatarUrl!) as ImageProvider : null),
+                            : (user?.avatarUrl != null
+                                ? NetworkImage(resolveMediaUrl(user!.avatarUrl!)) as ImageProvider
+                                : null),
                         child: (_avatarFile == null && user?.avatarUrl == null)
                             ? Text(
                                 user?.initials ?? 'U',
