@@ -416,3 +416,191 @@ async def explain_message(
     )
 
     return response.choices[0].message.content.strip()
+
+# ─── Voice message transcription (Whisper + Gemini fallback) ──────
+
+_GEMINI_STT_MODELS = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.8-flash"]
+_GEMINI_STT_MIME = {
+    "m4a": "audio/mp4", "mp3": "audio/mpeg", "aac": "audio/aac",
+    "ogg": "audio/ogg", "wav": "audio/wav", "webm": "audio/webm",
+}
+
+
+async def _gemini_fallback_transcribe(
+    audio_bytes: bytes,
+    filename: str = "voice.webm",
+    hint_language: Optional[str] = None,
+) -> Dict:
+    """Transcribe audio with Google Gemini (uses the configured GOOGLE_API_KEY).
+    Works even when the OpenAI account has no credits."""
+    import base64
+    key = (getattr(settings, "GOOGLE_API_KEY", "") or "").strip()
+    if not key:
+        raise RuntimeError("Transcription unavailable: no GOOGLE_API_KEY configured")
+
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "webm"
+    mime = _GEMINI_STT_MIME.get(ext, "audio/webm")
+
+    prompt = (
+        "Transcribe this audio exactly as spoken. "
+        + (f"The speaker most likely speaks {hint_language}. " if hint_language else "")
+        + "Reply ONLY with a JSON object: {\"text\": \"<transcript>\", \"language_code\": \"<ISO 639-1 code of the spoken language>\"}"
+    )
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt},
+                    {"inline_data": {"mime_type": mime, "data": base64.b64encode(audio_bytes).decode("ascii")}},
+                ]
+            }
+        ]
+    }
+    try:
+        last_err = None
+        data = None
+        async with httpx.AsyncClient(timeout=60) as http:
+            # Try each model in turn; retry transient failures (429/5xx) once
+            # per model. Gemini flash models are intermittently overloaded.
+            for model in _GEMINI_STT_MODELS:
+                for attempt in range(2):
+                    try:
+                        resp = await http.post(
+                            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                            params={"key": key},
+                            json=payload,
+                        )
+                        if resp.status_code in (429, 500, 502, 503, 504) and attempt < 1:
+                            last_err = f"{model}: HTTP {resp.status_code}"
+                            import asyncio as _asyncio
+                            await _asyncio.sleep(2)
+                            continue
+                        resp.raise_for_status()
+                        data = resp.json()
+                        break
+                    except httpx.HTTPStatusError as e:
+                        last_err = f"{model}: {e}"
+                        break
+                    except Exception as e:
+                        last_err = f"{model}: {e}"
+                        if attempt < 1:
+                            import asyncio as _asyncio
+                            await _asyncio.sleep(2)
+                            continue
+                if data is not None:
+                    break
+        if data is None:
+            raise RuntimeError(f"Gemini transcription failed: {last_err}")
+    except Exception as e:
+        raise RuntimeError(f"Gemini transcription failed: {e}")
+
+    try:
+        text_out = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        # Strip markdown fences if the model wraps the JSON.
+        if text_out.startswith("```"):
+            text_out = text_out.strip("`")
+            if text_out.startswith("json"):
+                text_out = text_out[4:]
+            text_out = text_out.strip()
+        parsed = json.loads(text_out)
+    except Exception as e:
+        raise RuntimeError(f"Gemini transcription returned unexpected format: {e}")
+
+    raw_lang = (parsed.get("language_code") or "").lower()
+    iso_to_name = {v: k for k, v in LANGUAGE_CODES.items()}
+    lang = iso_to_name.get(raw_lang, hint_language or "english")
+    return {
+        "text": (parsed.get("text") or "").strip(),
+        "language": lang,
+        "raw_language": raw_lang,
+    }
+
+
+async def transcribe_audio(
+    audio_bytes: bytes,
+    filename: str = "voice.webm",
+    hint_language: Optional[str] = None,
+) -> Dict:
+    """Transcribe a voice-note audio blob.
+
+    Tries OpenAI Whisper first; on any failure falls back to Google Gemini.
+    Returns a dict:
+        {
+            "text": "<transcript>",
+            "language": "english",       # nearest supported language
+            "raw_language": "en",        # ISO-639-1 code
+        }
+
+    Raises RuntimeError when every provider fails — callers treat
+    transcription as best-effort and must never block message delivery on it.
+    """
+    errors = []
+    if _has_openai_key():
+        kwargs = {"model": "whisper-1", "response_format": "verbose_json"}
+        if hint_language:
+            # Whisper understands ISO codes; passing the hint improves accuracy.
+            iso = LANGUAGE_CODES.get(hint_language)
+            if iso:
+                kwargs["language"] = iso
+        try:
+            response = await openai_client.audio.transcriptions.create(
+                file=(filename, audio_bytes),
+                **kwargs,
+            )
+            raw_lang = getattr(response, "language", "") or ""
+            iso_to_name = {v: k for k, v in LANGUAGE_CODES.items()}
+            lang = iso_to_name.get(raw_lang, hint_language or "english")
+            return {
+                "text": (response.text or "").strip(),
+                "language": lang,
+                "raw_language": raw_lang,
+                "provider": "openai",
+            }
+        except Exception as e:
+            errors.append(f"Whisper: {e}")
+    else:
+        errors.append("Whisper: no OpenAI key")
+
+    try:
+        result = await _gemini_fallback_transcribe(audio_bytes, filename, hint_language)
+        result["provider"] = "gemini"
+        return result
+    except Exception as e:
+        errors.append(str(e))
+
+    raise RuntimeError("Transcription failed — " + " | ".join(errors))
+
+
+async def transcribe_and_translate_voice(
+    audio_bytes: bytes,
+    filename: str = "voice.webm",
+    hint_language: Optional[str] = None,
+    db: Optional[AsyncSession] = None,
+) -> Dict:
+    """Full voice-note pipeline: transcribe, then translate into all languages.
+
+    Returns:
+        {
+            "transcript": "<original-language transcript>",
+            "language": "<detected language>",
+            "translations": {"english": "...", "french": "...", ...},
+        }
+    """
+    result = await transcribe_audio(audio_bytes, filename, hint_language)
+    transcript = result["text"]
+    if not transcript:
+        raise RuntimeError("Transcription produced no text")
+
+    detected = result["language"]
+    try:
+        translations = await translate_message_for_all_languages(
+            transcript, detected, db
+        )
+    except Exception as e:
+        raise RuntimeError(f"Voice translation failed: {e}")
+
+    return {
+        "transcript": transcript,
+        "language": detected,
+        "translations": translations,
+    }

@@ -129,6 +129,7 @@ class VoiceTranslationService {
 
   /// Speaker's app was asked to stream mic audio.
   Future<void> handleStreamStart(Map<String, dynamic> data) async {
+    debugPrint('voice translation: stream_start received (speaker side)');
     final callId = data['call_id']?.toString() ?? '';
     if (callId.isEmpty) return;
     await startStreamingMic(
@@ -142,9 +143,17 @@ class VoiceTranslationService {
   void handleTranslatedAudio(Map<String, dynamic> data) {
     final audio = data['audio']?.toString();
     if (audio == null || audio.isEmpty) return;
+    if (_pcmQueue.isEmpty) {
+      debugPrint('voice translation: first audio frame received');
+    }
     try {
       _pcmQueue.add(base64Decode(audio));
-      _drainPcm();
+      // Safety valve: very long turns play in ~10s blocks rather than
+      // waiting for turnComplete.
+      if (_pcmQueue.length >= 300) {
+        _utteranceEnded = false;
+        _playQueuedUtterance();
+      }
     } catch (e) {
       debugPrint('voice translation: bad audio frame: $e');
     }
@@ -161,8 +170,11 @@ class VoiceTranslationService {
       _pcmQueue.clear();
       _utteranceEnded = false;
     } else {
-      // turnComplete
+      // turnComplete — play the whole utterance as ONE continuous clip.
+      // (Playing per-frame chunks breaks on Android: audioplayers cannot
+      // gaplessly chain 40ms WAVs, so the translation came out silent.)
       _utteranceEnded = true;
+      _playQueuedUtterance();
     }
   }
 
@@ -173,21 +185,32 @@ class VoiceTranslationService {
     _player!.setReleaseMode(ReleaseMode.stop);
   }
 
-  Future<void> _drainPcm() async {
-    if (_playbackBusy) return;
+  /// Play everything queued so far as a single WAV clip (one utterance).
+  Future<void> _playQueuedUtterance() async {
+    if (_pcmQueue.isEmpty || _playbackBusy) return;
     _playbackBusy = true;
+    // Take the whole queue at once so nothing interleaves with the next turn.
+    final frames = List<Uint8List>.from(_pcmQueue);
+    _pcmQueue.clear();
     try {
-      while (_pcmQueue.isNotEmpty) {
-        final chunk = _pcmQueue.removeAt(0);
-        final wav = _pcmToWav(chunk, sampleRate: 24000, numChannels: 1);
-        _ensurePlayer();
-        // audioplayers on web/mobile: feed bytes via BytesSource.
-        await _player!.play(BytesSource(wav));
+      final merged = BytesBuilder();
+      for (final f in frames) {
+        merged.add(f);
       }
+      final pcm = merged.takeBytes();
+      if (pcm.length < 3200) return; // < ~66ms: probably silence/noise
+      final wav = _pcmToWav(pcm, sampleRate: 24000, numChannels: 1);
+      _ensurePlayer();
+      await _player!.play(BytesSource(wav));
+      debugPrint('voice translation: PLAYING utterance (${pcm.length ~/ 2} samples)');
     } catch (e) {
       debugPrint('voice translation playback error: $e');
     } finally {
       _playbackBusy = false;
+      // A new turn may have arrived while we were playing.
+      if (_utteranceEnded && _pcmQueue.isNotEmpty) {
+        _playQueuedUtterance();
+      }
     }
   }
 

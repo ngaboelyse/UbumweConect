@@ -119,6 +119,11 @@ async def handle_call_signal(user_id: str, data: dict):
         await manager.send_call_signal(to_user_id, data)
 
 
+# call_id -> {"receiver": ..., "speaker": ..., "source_language": ..., "target_language": ..., "voice": ...}
+# Lets us transparently re-open a Gemini session if it dies mid-call.
+_translation_requests: dict = {}
+
+
 async def handle_voice_translation_start(user_id: str, data: dict):
     """Receiver asks to start translated-voice playback for a call.
 
@@ -135,11 +140,16 @@ async def handle_voice_translation_start(user_id: str, data: dict):
         )
         return
 
+    print(f"[voice-translation] start request from receiver {user_id} for call {call_id} (speaker={speaker_id})")
+
     async def push_audio(b64_pcm: str):
         await manager.send_personal_message(
             user_id,
             {"event": "voice_translation", "data": {"call_id": call_id, "audio": b64_pcm}},
         )
+        if not getattr(handle_voice_translation_start, "_audio_logged", False):
+            handle_voice_translation_start._audio_logged = True
+            print(f"[voice-translation] sending translated audio to receiver (len={len(b64_pcm)})")
 
     async def push_text(text):
         # text: transcript chunk, "" = interrupted (stop playback), None = utterance end
@@ -148,6 +158,7 @@ async def handle_voice_translation_start(user_id: str, data: dict):
             {"event": "voice_translation_status", "data": {"call_id": call_id, "text": text}},
         )
 
+    print(f"[voice-translation] opening Gemini session for call {call_id} ...")
     session = await live_translation_manager.start_session(
         call_id=call_id,
         speaker_user_id=speaker_id,
@@ -158,8 +169,17 @@ async def handle_voice_translation_start(user_id: str, data: dict):
         on_audio=push_audio,
         on_text=push_text,
     )
+    print(f"[voice-translation] session open for call {call_id} (gemini_available={getattr(session, 'gemini_available', False)})")
+    _translation_requests[call_id] = {
+        "receiver": user_id,
+        "speaker": speaker_id,
+        "source_language": data.get("source_language", "kinyarwanda"),
+        "target_language": data.get("target_language", "english"),
+        "voice": data.get("voice") or DEFAULT_VOICE,
+    }
     # Tell the SPEAKER's app to start streaming its mic PCM into the session.
     if getattr(session, "gemini_available", False):
+        print(f"[voice-translation] asking speaker {speaker_id} to stream mic for call {call_id}")
         await manager.send_personal_message(
             speaker_id,
             {
@@ -171,6 +191,8 @@ async def handle_voice_translation_start(user_id: str, data: dict):
                 },
             },
         )
+    else:
+        print(f"[voice-translation] Gemini unavailable for call {call_id} — speaker {speaker_id} will NOT stream mic")
     await manager.send_personal_message(
         user_id,
         {
@@ -190,6 +212,7 @@ async def handle_voice_translation_stop(user_id: str, data: dict):
     speaker_id = data.get("speaker_id")
     if call_id and speaker_id:
         await live_translation_manager.stop_session(call_id, speaker_id)
+        _translation_requests.pop(call_id, None)
         # Tell the speaker's app to stop streaming its mic.
         await manager.send_personal_message(
             speaker_id,
@@ -219,5 +242,31 @@ async def handle_voice_translation_audio(user_id: str, data: dict):
     if not call_id or not audio:
         return
     session = live_translation_manager.get_session(call_id, user_id)
-    if session:
+    if session and getattr(session, "gemini_available", False):
         await session.send_audio_chunk(audio)
+        return
+
+    # No live session: the Gemini session died (backend restart, Gemini
+    # disconnect, ...) while the speaker kept streaming. If a translation was
+    # requested for this call, transparently re-open it — no UI action needed.
+    req = _translation_requests.get(call_id)
+    if req and req["speaker"] == user_id:
+        print(f"[voice-translation] session missing for call {call_id} — re-opening automatically")
+        await handle_voice_translation_start(req["receiver"], {
+            "call_id": call_id,
+            "speaker_id": req["speaker"],
+            "source_language": req["source_language"],
+            "target_language": req["target_language"],
+            "voice": req["voice"],
+        })
+        session = live_translation_manager.get_session(call_id, user_id)
+        if session and getattr(session, "gemini_available", False):
+            await session.send_audio_chunk(audio)
+            return
+    # Nothing we can do (no request or Gemini still failing): stop the
+    # speaker's mic so it isn't streaming into the void.
+    print(f"[voice-translation] cannot re-open session for call {call_id} — stopping mic")
+    await manager.send_personal_message(
+        user_id,
+        {"event": "voice_translation_stream_stop", "data": {"call_id": call_id}},
+    )

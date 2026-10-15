@@ -3,12 +3,17 @@ from sqlalchemy.orm import DeclarativeBase
 from app.config import settings
 
 
+# Pool args only apply to non-SQLite dialects.
+_pool_kwargs = {} if settings.DATABASE_URL.startswith("sqlite") else {
+    "pool_size": 10,
+    "max_overflow": 20,
+}
+
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DEBUG,
     pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
+    **_pool_kwargs,
 )
 
 AsyncSessionLocal = async_sessionmaker(

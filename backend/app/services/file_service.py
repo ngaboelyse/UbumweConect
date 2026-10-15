@@ -112,6 +112,33 @@ class FileService:
             ExpiresIn=expiration,
         )
 
+    async def download_bytes(self, url: str) -> bytes:
+        """Fetch a previously-uploaded file's bytes by its public URL.
+
+        Supports the local-storage URLs this service returns (`/files/...`)
+        and full S3 https URLs. Raises RuntimeError on failure.
+        """
+        if not url:
+            raise RuntimeError("Empty URL")
+        if url.startswith("/files/"):
+            key = url.removeprefix("/files/").replace("..", "_")
+            path = (LOCAL_UPLOAD_DIR / key).resolve()
+            try:
+                # Guard against path traversal outside the uploads dir.
+                path.relative_to(LOCAL_UPLOAD_DIR.resolve())
+            except ValueError:
+                raise RuntimeError(f"Invalid file path: {url}")
+            if not path.is_file():
+                raise RuntimeError(f"File not found: {url}")
+            return path.read_bytes()
+        if url.startswith(("http://", "https://")):
+            import httpx
+            async with httpx.AsyncClient(timeout=30) as http:
+                resp = await http.get(url)
+                resp.raise_for_status()
+                return resp.content
+        raise RuntimeError(f"Unsupported file URL: {url}")
+
     def validate_file_type(self, filename: str, allowed_types: list) -> bool:
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
         return ext in allowed_types

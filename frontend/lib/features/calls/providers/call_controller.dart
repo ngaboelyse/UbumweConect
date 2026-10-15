@@ -209,6 +209,9 @@ class CallController extends StateNotifier<CallSession?> {
       _pendingOffer = null;
       await _handleSignal(offer);
     }
+
+    // Auto-start translation: hear the peer's speech in OUR language.
+    await startVoiceTranslation();
   }
 
   Future<void> rejectIncoming() async {
@@ -288,6 +291,15 @@ class CallController extends StateNotifier<CallSession?> {
       case 'call_signal':
         _handleSignal(data);
         break;
+      case 'voice_translation_started':
+        translationActive.value = data['gemini_available'] == true;
+        if (data['gemini_available'] != true) {
+          state = state?.copyWith(error: 'Translation unavailable on the server');
+        }
+        break;
+      case 'voice_translation_stopped':
+        translationActive.value = false;
+        break;
       case 'voice_translation_stream_start':
       case 'voice_translation':
       case 'voice_translation_status':
@@ -308,6 +320,9 @@ class CallController extends StateNotifier<CallSession?> {
     state = s.copyWith(phase: CallPhase.active, peerId: data['user_id']?.toString() ?? s.peerId);
     await _prepareMediaAndPeer();
     await _createAndSendOffer();
+
+    // Auto-start translation: hear the callee's speech in OUR language.
+    await startVoiceTranslation();
   }
 
   // ── WebRTC ───────────────────────────────────────────────────────────────
@@ -529,6 +544,15 @@ class CallController extends StateNotifier<CallSession?> {
 
   // ── Voice translation (Gemini Live) ─────────────────────────────────
 
+  /// Translation state for the CURRENT call. True = a Gemini Live session is
+  /// active (or was requested); exposed so the call UI can reflect reality.
+  final ValueNotifier<bool> translationActive = ValueNotifier(false);
+
+  /// Transcript / error stream from the translation service (for the call UI).
+  Stream<VoiceTranslationStatus> get voiceTranslationStatus {
+    return _ref.read(voiceTranslationServiceProvider).status;
+  }
+
   /// Receiver: start hearing the peer's speech translated (synthetic voice).
   Future<void> startVoiceTranslation({String voice = kDefaultGeminiVoice}) async {
     final s = state;
@@ -542,6 +566,9 @@ class CallController extends StateNotifier<CallSession?> {
       final peer = await _ref.read(apiServiceProvider).get('/users/${s.peerId}');
       peerLang = peer['preferred_language']?.toString() ?? 'kinyarwanda';
     } catch (_) {}
+    // Same language: nothing to translate.
+    if (myLang == peerLang) return;
+    debugPrint('voice translation: requesting session (peer $peerLang -> me $myLang)');
     _ref.read(voiceTranslationServiceProvider).startListening(
           callId: s.callId,
           speakerId: s.peerId,
@@ -569,6 +596,7 @@ class CallController extends StateNotifier<CallSession?> {
     final vt = _ref.read(voiceTranslationServiceProvider);
     vt.stopStreamingMic();
     vt.stopListening(callId: state?.callId ?? '', speakerId: state?.peerId ?? '');
+    translationActive.value = false;
     _pendingOffer = null;
     _pendingCandidates.clear();
     _pc?.close();

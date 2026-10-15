@@ -17,12 +17,15 @@ class AppConstants {
   // the device's subnet for the backend /health endpoint (see HostDiscovery).
   // `defaultHost` is only the last-resort fallback if probing finds nothing.
   // Android emulator: '10.0.2.2:8000'.
-  static const String defaultHost = '10.20.2.131:8000';
-  static const bool useTls = false; // true = https/wss (tunnel), false = http/ws (local/LAN)
+  // Override at build/run time: flutter run --dart-define=API_HOST=192.168.1.10 --dart-define=API_PORT=8001
+  static const String defaultHost =
+      String.fromEnvironment('API_HOST', defaultValue: '10.20.3.125:8000');
+  static const bool useTls = bool.fromEnvironment('API_TLS', defaultValue: false); // true = https/wss (tunnel), false = http/ws (local/LAN)
 
   // The web build is served on :3000 but the backend listens on :8000.
   static const String webPort = '3000';
-  static const String apiPort = '8000';
+  static const String apiPort =
+      String.fromEnvironment('API_PORT', defaultValue: '8000');
 
   /// Synchronously usable host. Returns the last discovered host, or falls
   /// back to [defaultHost] before discovery has run. Call [initHost] at app

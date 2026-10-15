@@ -11,6 +11,42 @@ class ApiService {
   late final Dio _dio;
   final LocalStorageService _storage;
 
+  // Shared token refresh: only ONE refresh request may be in flight across
+  // the whole app (HTTP interceptor + WebSocket reconnects). The backend
+  // rotates the refresh token on every /auth/refresh call, so two parallel
+  // refreshes race — the loser sends the just-rotated (now dead) token, gets
+  // 401 and would clear the session, logging the user out spuriously.
+  static Future<bool>? _refreshInFlight;
+
+  static Future<bool> refreshTokenOnce(LocalStorageService storage) {
+    // Reuse any in-flight refresh (a different ApiService instance or the
+    // WebSocket service may have started one already).
+    if (_refreshInFlight != null) return _refreshInFlight!;
+    _refreshInFlight = _doRefresh(storage).whenComplete(() => _refreshInFlight = null);
+    return _refreshInFlight!;
+  }
+
+  static Future<bool> _doRefresh(LocalStorageService storage) async {
+    final refreshToken = await storage.getRefreshToken();
+    if (refreshToken == null) return false;
+    final dio = Dio(BaseOptions(
+      baseUrl: AppConstants.baseUrl,
+      connectTimeout: const Duration(seconds: 15),
+      receiveTimeout: const Duration(seconds: 15),
+      headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+    ));
+    try {
+      final response = await dio.post('/auth/refresh', data: {'refresh_token': refreshToken});
+      final data = response.data as Map<String, dynamic>;
+      await storage.saveTokens(data['access_token'], data['refresh_token']);
+      return true;
+    } catch (_) {
+      // Refresh token is genuinely dead (expired session) — sign out.
+      await storage.clearAll();
+      return false;
+    }
+  }
+
   ApiService(this._storage) {
     _dio = Dio(
       BaseOptions(
@@ -31,8 +67,11 @@ class ApiService {
           handler.next(options);
         },
         onError: (DioException error, handler) async {
-          if (error.response?.statusCode == 401) {
-            final refreshed = await _tryRefreshToken();
+          // Never try to refresh the refresh call itself, and only refresh on
+          // a genuine 401 from a data request.
+          final path = error.requestOptions.path;
+          if (error.response?.statusCode == 401 && !path.contains('/auth/refresh')) {
+            final refreshed = await ApiService.refreshTokenOnce(_storage);
             if (refreshed) {
               final token = await _storage.getAccessToken();
               error.requestOptions.headers['Authorization'] = 'Bearer $token';
@@ -46,23 +85,6 @@ class ApiService {
     );
   }
 
-  Future<bool> _tryRefreshToken() async {
-    final refreshToken = await _storage.getRefreshToken();
-    if (refreshToken == null) return false;
-    try {
-      final response = await _dio.post(
-        '/auth/refresh',
-        data: {'refresh_token': refreshToken},
-        options: Options(headers: {}),
-      );
-      final data = response.data as Map<String, dynamic>;
-      await _storage.saveTokens(data['access_token'], data['refresh_token']);
-      return true;
-    } catch (_) {
-      await _storage.clearAll();
-      return false;
-    }
-  }
 
   Future<Map<String, dynamic>> get(String path, {Map<String, dynamic>? params}) async {
     final response = await _dio.get(path, queryParameters: params);

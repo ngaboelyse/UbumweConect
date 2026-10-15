@@ -1,13 +1,16 @@
 {
-    "name": "ubumwe_connect",
-    "short_name": "ubumwe_connect",
+    "name": "Ubumwe Connect",
+    "short_name": "Ubumwe",
     "start_url": ".",
+    "id": "/",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "Bringing People Together Beyond Language. Real-time multilingual chat with voice translation in Kinyarwanda, English, French, Swahili and more.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
+    "lang": "en",
+    "categories": ["social", "communication"],
     "icons": [
         {
             "src": "icons/Icon-192.png",

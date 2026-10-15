@@ -3,6 +3,14 @@ from datetime import datetime
 from sqlalchemy import String, Boolean, DateTime, Text, ForeignKey, Enum as SAEnum, Integer, Float
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy import JSON
+
+# JSONB variant: PostgreSQL gets native JSONB, other dialects (SQLite tests) fall back to JSON.
+def _json_variant() -> JSON:
+    return JSON().with_variant(JSONB, "postgresql")
+
+JSONVariant = _json_variant()
+
 import enum
 
 from app.database import Base
@@ -95,7 +103,7 @@ class Message(Base):
     original_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     original_language: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # Stores translations as {"english": "...", "french": "...", "kinyarwanda": "...", "swahili": "..."}
-    translated_contents: Mapped[dict | None] = mapped_column(JSONB, nullable=True, default=dict)
+    translated_contents: Mapped[dict | None] = mapped_column(JSONVariant, nullable=True, default=dict)
     audio_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     file_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -104,7 +112,7 @@ class Message(Base):
     is_edited: Mapped[bool] = mapped_column(Boolean, default=False)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     reply_to_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)
-    extra_metadata: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True, default=dict)
+    extra_metadata: Mapped[dict | None] = mapped_column("metadata", JSONVariant, nullable=True, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow

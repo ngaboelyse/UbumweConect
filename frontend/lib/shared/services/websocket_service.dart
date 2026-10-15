@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../../core/constants/app_constants.dart';
+import 'api_service.dart';
 import 'local_storage_service.dart';
 
 final websocketServiceProvider = Provider<WebSocketService>((ref) {
@@ -14,16 +14,15 @@ enum WsConnectionState { disconnected, connecting, connected, reconnecting }
 
 class WebSocketService {
   final LocalStorageService _storage;
-  final Dio _dio = Dio(BaseOptions(  // raw client: no auth interceptor needed
-    connectTimeout: const Duration(seconds: 15),
-    receiveTimeout: const Duration(seconds: 15),
-  ));
   WebSocketChannel? _channel;
   Timer? _reconnectTimer;
   Timer? _pingTimer;
   int _reconnectAttempts = 0;
   String? _currentUserId;
   WsConnectionState _state = WsConnectionState.disconnected;
+  // Token age: refresh proactively instead of relying on 403-reconnect loops.
+  DateTime _lastTokenRefresh = DateTime.now();
+  static const _tokenMaxAge = Duration(minutes: 25); // tokens expire in 30
 
   final _messageController = StreamController<Map<String, dynamic>>.broadcast();
   final _stateController = StreamController<WsConnectionState>.broadcast();
@@ -36,12 +35,23 @@ class WebSocketService {
 
   Future<void> connect(String userId) async {
     _currentUserId = userId;
-    final token = await _storage.getAccessToken();
-    if (token == null) return;
 
     _setState(WsConnectionState.connecting);
 
     try {
+      // Proactive refresh: if the access token is near/past expiry, get a
+      // fresh one BEFORE connecting, so the first attempt succeeds.
+      if (DateTime.now().difference(_lastTokenRefresh) >= _tokenMaxAge) {
+        final refreshed = await ApiService.refreshTokenOnce(_storage);
+        if (!refreshed) {
+          _setState(WsConnectionState.disconnected);
+          return;
+        }
+      }
+      _lastTokenRefresh = DateTime.now();
+      final token = await _storage.getAccessToken();
+      if (token == null) return;
+
       final uri = Uri.parse('${AppConstants.wsBaseUrl}/$userId?token=$token');
       _channel = WebSocketChannel.connect(uri);
 
@@ -80,22 +90,15 @@ class WebSocketService {
     _reconnectTimer = Timer(delay, () async {
       _reconnectAttempts++;
       // The access token may have expired while disconnected (the app can sit
-      // in the background for hours). Force a token refresh by calling the
-      // refresh endpoint directly — otherwise reconnects fail 403 forever and
-      // incoming calls / subtitles never arrive.
+      // in the background for hours). Refresh via the SHARED single-flight
+      // routine — a parallel refresh from the HTTP interceptor rotates the
+      // refresh token, and reusing the dead one here would 401 and wipe the
+      // session (this used to cause a 403 reconnect storm + rate-limit 429s).
       try {
-        final rt = await _storage.getRefreshToken();
-        if (rt != null) {
-          final resp = await _dio.post(
-            '${AppConstants.baseUrl}/auth/refresh',
-            data: {'refresh_token': rt},
-          );
-          final data = resp.data as Map<String, dynamic>;
-          await _storage.saveTokens(data['access_token'], data['refresh_token']);
-        }
+        final refreshed = await ApiService.refreshTokenOnce(_storage);
+        if (!refreshed) return; // session truly dead; stop reconnecting
       } catch (_) {
-        // Refresh failed (e.g. refresh token also expired) — still attempt
-        // the socket; if the token is stale the server rejects and we retry.
+        // Network hiccup — still attempt the socket with the current token.
       }
       await connect(_currentUserId!);
     });

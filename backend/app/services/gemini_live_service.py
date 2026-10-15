@@ -141,7 +141,9 @@ class LiveTranslationSession:
             return False
         url = f"{GEMINI_LIVE_URL}?key={settings.GOOGLE_API_KEY}"
         try:
-            self._ws = await websockets.connect(url, max_size=None)
+            self._ws = await asyncio.wait_for(
+                websockets.connect(url, max_size=None), timeout=10.0
+            )
         except Exception as e:
             print(f"[gemini-live] connect failed: {e}")
             return False
@@ -174,6 +176,16 @@ class LiveTranslationSession:
         try:
             async for raw in self._ws:
                 msg = json.loads(raw)
+
+                # Setup / error handling: log failures so bad configs are visible.
+                if msg.get("setupComplete"):
+                    print(f"[gemini-live] setup complete for call {self.call_id}")
+                    continue
+                if msg.get("error") or msg.get("serverError"):
+                    err = msg.get("error") or msg.get("serverError")
+                    print(f"[gemini-live] server error for call {self.call_id}: {err}")
+                    continue
+
                 sc = msg.get("serverContent", {})
 
                 turn = sc.get("modelTurn", {})
@@ -181,16 +193,25 @@ class LiveTranslationSession:
                     inline = part.get("inlineData") or {}
                     b64 = inline.get("data")
                     if b64 and self._on_audio:
-                        self._on_audio(b64)
+                        await self._on_audio(b64)
                     text = part.get("text")
                     if text and self._on_text:
-                        self._on_text(text)
+                        await self._on_text(text)
+
+                # Transcripts from the live-translate model (input = what the
+                # speaker said, output = the translated text being spoken).
+                for key in ("inputTranscription", "outputTranscription"):
+                    t = (sc.get(key) or {}).get("text")
+                    if t and self._on_text:
+                        await self._on_text(t)
 
                 if sc.get("interrupted") and self._on_text:
-                    self._on_text("")  # signal receiver to stop playback (barge-in)
+                    await self._on_text("")  # signal receiver to stop playback (barge-in)
 
                 if sc.get("turnComplete") and self._on_text:
-                    self._on_text(None)  # end-of-utterance marker
+                    await self._on_text(None)  # end-of-utterance marker
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             if not self.closed:
                 print(f"[gemini-live] receive loop ended: {e}")

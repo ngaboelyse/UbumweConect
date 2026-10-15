@@ -1,4 +1,5 @@
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, AliasChoices
+import pydantic
 from typing import Optional, Dict, List, Any
 from datetime import datetime
 import uuid
@@ -31,7 +32,9 @@ class ParticipantResponse(BaseModel):
 
 
 class MessageCreate(BaseModel):
-    content: str = Field(..., min_length=1, max_length=5000)
+    # For text messages this is the message body. For voice/media messages it
+    # may be empty — voice notes get a server-side transcript automatically.
+    content: str = Field(default="", max_length=5000)
     message_type: str = Field(default="text", pattern=r"^(text|image|file|voice|system)$")
     reply_to_id: Optional[uuid.UUID] = None
     # Media attachments (URL comes from the upload endpoint)
@@ -82,6 +85,15 @@ class MessageResponse(BaseModel):
     sender: Optional[UserProfile] = None
     status: Optional[str] = None
     reactions: List[MessageReactionResponse] = []
+    # Extra data (voice-note transcript, etc.) surfaced to clients.
+    # NOTE: the SQLAlchemy model stores it as `extra_metadata` (`metadata` is a
+    # reserved attribute that returns SQLAlchemy's internal MetaData object),
+    # so we validate from `extra_metadata` only and serialize as `metadata`.
+    metadata: Optional[Dict[str, object]] = pydantic.Field(
+        default=None,
+        validation_alias=AliasChoices("extra_metadata"),
+        serialization_alias="metadata",
+    )
 
 
 class ConversationResponse(BaseModel):

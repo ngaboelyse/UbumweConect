@@ -17,6 +17,11 @@ from app.config import settings
 # Paths exempt from rate limiting (health probes, docs)
 EXEMPT_PATHS = {"/health", "/", "/api/docs", "/api/redoc", "/api/openapi.json", "/metrics"}
 
+# Path PREFIXES exempt: token refresh must never 429 — a client whose access
+# token just expired may legitimately need several refreshes in quick
+# succession (and a shared one-flight refresh makes bursts rare anyway).
+EXEMPT_PREFIXES = ("/api/v1/auth/refresh",)
+
 # Stricter limits for expensive endpoints (path prefix -> max requests/min)
 EXPENSIVE_PREFIXES = {
     "/api/v1/translation": settings.TRANSLATION_RATE_LIMIT_PER_MINUTE,
@@ -45,7 +50,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         path = request.url.path
 
         # WebSockets and exempt paths are not rate limited here
-        if path in EXEMPT_PATHS or request.scope.get("type") == "websocket":
+        if path in EXEMPT_PATHS or request.scope.get("type") == "websocket" \
+                or path.startswith(EXEMPT_PREFIXES):
             return await call_next(request)
 
         key = f"{self._client_ip(request)}:{self._limit_for_path(path)}"

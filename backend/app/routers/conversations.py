@@ -18,7 +18,11 @@ from app.schemas.chat import (
     MessageCreate, MessageResponse, PaginatedMessages, AddParticipantRequest,
     MessageEdit, ReactionCreate,
 )
-from app.services.translation_service import translate_message_for_all_languages, detect_language
+from app.services.translation_service import (
+    translate_message_for_all_languages,
+    detect_language,
+    transcribe_and_translate_voice,
+)
 from app.services.file_service import FileService
 from app.services.notification_service import notification_service
 from app.websocket.manager import manager
@@ -326,6 +330,35 @@ async def send_message(
             logging.getLogger("app").warning("Translation failed, delivering untranslated: %s", e)
             translations = {source_language: data.content}
         message.translated_contents = translations
+    elif data.message_type == "voice":
+        # Voice note: transcribe with Whisper, then translate the transcript
+        # into every supported language so the recipient can read the message
+        # in their own language (and in the future, play a translated audio).
+        # Best-effort: on failure the voice note is still delivered as audio.
+        transcript = None
+        try:
+            audio_bytes = await file_service.download_bytes(data.media_url) if data.media_url else None
+        except Exception as e:
+            logging.getLogger("app").warning("Voice note download failed: %s", e)
+            audio_bytes = None
+        if audio_bytes:
+            try:
+                voice_result = await transcribe_and_translate_voice(
+                    audio_bytes,
+                    filename=data.file_name or "voice.webm",
+                    hint_language=source_language,
+                    db=db,
+                )
+                transcript = voice_result["transcript"]
+                message.translated_contents = voice_result["translations"]
+                # Whisper may detect a different language than the sender's
+                # preference — trust the audio itself.
+                message.original_language = voice_result["language"]
+            except Exception as e:
+                logging.getLogger("app").warning("Voice transcription failed, delivering untranslated: %s", e)
+        if transcript:
+            message.original_content = transcript
+            message.extra_metadata = {"transcript": transcript, "voice_translated": True}
 
     # Update conversation timestamp
     conversation.updated_at = datetime.utcnow()

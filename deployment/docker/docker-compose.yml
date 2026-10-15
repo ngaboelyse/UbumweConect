@@ -80,6 +80,8 @@ services:
     volumes:
       - ../../backend:/app
       - backend_uploads:/app/uploads
+      # Serve the Flutter web build from the backend itself (one URL for API + web)
+      - ../../frontend/build/web:/app/webapp:ro
     ports:
       - "8000:8000"
     healthcheck:

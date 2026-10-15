@@ -72,6 +72,9 @@ try:
 except Exception:  # pragma: no cover - static files are best-effort
     pass
 
+# NOTE: the Flutter web app is mounted at the END of this file (after all API
+# routes) so its catch-all route cannot shadow /api, /ws or /health.
+
 # ─── Middleware ────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
@@ -140,3 +143,36 @@ async def not_found_handler(request, exc):
 @app.exception_handler(500)
 async def internal_error_handler(request, exc):
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+
+# ─── Flutter Web App ────────────────────────────────────────
+# Serve the built web client from the backend itself so the browser and the
+# phone app both hit the same host: http://<PC-IP>:8000
+# Registered AFTER all API/WS routes so the SPA catch-all cannot shadow them.
+try:
+    from fastapi.staticfiles import StaticFiles
+    from pathlib import Path as _Path
+    from starlette.responses import FileResponse
+
+    _webapp = _Path("/app/webapp")
+    if not _webapp.exists():
+        _webapp = _Path("webapp")
+    if (_webapp / "index.html").exists():
+        for _static in ("assets", "canvaskit", "icons"):
+            _dir = _webapp / _static
+            if _dir.exists():
+                app.mount(f"/{_static}", StaticFiles(directory=str(_dir)), name=_static)
+
+        @app.get("/", include_in_schema=False)
+        async def _serve_web_root():
+            return FileResponse(_webapp / "index.html")
+
+        # SPA fallback: any unknown non-API, non-WS path returns the app shell
+        @app.get("/{spa_path:path}", include_in_schema=False)
+        async def _serve_web_spa(spa_path: str):
+            candidate = _webapp / spa_path
+            if ".." not in spa_path and candidate.is_file():
+                return FileResponse(candidate)
+            return FileResponse(_webapp / "index.html")
+except Exception:  # pragma: no cover - web serving is best-effort
+    pass

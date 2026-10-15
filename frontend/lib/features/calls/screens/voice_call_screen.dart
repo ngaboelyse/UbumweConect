@@ -21,16 +21,22 @@ class VoiceCallScreen extends ConsumerStatefulWidget {
 class _VoiceCallScreenState extends ConsumerState<VoiceCallScreen> {
   bool _isMuted = false;
   bool _isSpeakerOn = false;
-  bool _translationOn = false;
   String _duration = '00:00';
   Timer? _durationTimer;
   int _seconds = 0;
+  StreamSubscription? _vtStatusSub;
+  String? _translationStatus;
 
   // On web, remote audio only plays when attached to an <audio> element
   // (flutter_webrtc does that inside RTCVideoRenderer). No-op on mobile.
   final RemoteAudioPlayer _remoteAudio = RemoteAudioPlayerImpl();
 
-  CallController get _call => ref.read(callControllerProvider.notifier);
+  CallController? _callRef;
+  CallController get _call {
+    final c = ref.read(callControllerProvider.notifier);
+    _callRef ??= c;
+    return c;
+  }
 
   @override
   void initState() {
@@ -48,6 +54,11 @@ class _VoiceCallScreenState extends ConsumerState<VoiceCallScreen> {
     // opened (e.g. the callee tapped Accept).
     _remoteAudio.setStream(_call.remoteStream.value);
     _call.remoteStream.addListener(_onRemoteStream);
+    // Surface translation transcripts/errors so the button is never silent.
+    _vtStatusSub = _call.voiceTranslationStatus.listen((s) {
+      if (!mounted) return;
+      setState(() => _translationStatus = s.error ?? s.transcript);
+    });
   }
 
   void _onRemoteStream() {
@@ -57,6 +68,7 @@ class _VoiceCallScreenState extends ConsumerState<VoiceCallScreen> {
   @override
   void dispose() {
     _durationTimer?.cancel();
+    _vtStatusSub?.cancel();
     _call.remoteStream.removeListener(_onRemoteStream);
     _remoteAudio.dispose();
     super.dispose();
@@ -117,7 +129,18 @@ class _VoiceCallScreenState extends ConsumerState<VoiceCallScreen> {
               const SizedBox(height: 20),
               Text(peerName, style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w700, fontFamily: 'Poppins')),
               const SizedBox(height: 8),
-              Text(session.error ?? statusText, style: const TextStyle(color: Colors.white60, fontSize: 16, fontFamily: 'Poppins')),
+              Text(statusText, style: const TextStyle(color: Colors.white60, fontSize: 16, fontFamily: 'Poppins')),
+              if (_call.translationActive.value)
+                const Padding(
+                  padding: EdgeInsets.only(top: 6),
+                  child: Text('Translating…', style: TextStyle(color: AppColors.primary, fontSize: 13, fontWeight: FontWeight.w600, fontFamily: 'Poppins')),
+                ),
+              if (_translationStatus != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6, left: 24, right: 24),
+                  child: Text(_translationStatus!, textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.white70, fontSize: 12, fontFamily: 'Poppins')),
+                ),
 
               const Spacer(),
 
@@ -145,18 +168,20 @@ class _VoiceCallScreenState extends ConsumerState<VoiceCallScreen> {
                       },
                       active: _isSpeakerOn,
                     ),
-                    _CallButton(
-                      icon: Icons.translate,
-                      label: 'Translate',
-                      onTap: () {
-                        if (_translationOn) {
-                          _call.stopVoiceTranslation();
-                        } else {
-                          _call.startVoiceTranslation();
-                        }
-                        setState(() => _translationOn = !_translationOn);
-                      },
-                      active: _translationOn,
+                    ValueListenableBuilder<bool>(
+                      valueListenable: _call.translationActive,
+                      builder: (context, active, _) => _CallButton(
+                        icon: Icons.translate,
+                        label: active ? 'Translating' : 'Translate',
+                        onTap: () {
+                          if (active) {
+                            _call.stopVoiceTranslation();
+                          } else {
+                            _call.startVoiceTranslation();
+                          }
+                        },
+                        active: active,
+                      ),
                     ),
                     // End call (large red)
                     GestureDetector(
