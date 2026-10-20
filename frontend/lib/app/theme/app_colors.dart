@@ -3,10 +3,10 @@ import 'package:flutter/material.dart';
 class AppColors {
   AppColors._();
 
-  // Primary palette
-  static const Color primary = Color(0xFF1565C0);
-  static const Color primaryLight = Color(0xFF1E88E5);
-  static const Color primaryDark = Color(0xFF0D47A1);
+  // Primary palette (WhatsApp-style teal green)
+  static const Color primary = Color(0xFF008069);
+  static const Color primaryLight = Color(0xFF00A884);
+  static const Color primaryDark = Color(0xFF005C4B);
 
   // Secondary palette
   static const Color secondary = Color(0xFF00ACC1);
@@ -18,9 +18,12 @@ class AppColors {
   static const Color accentLight = Color(0xFFFF8F00);
 
   // Backgrounds
-  static const Color background = Color(0xFFF8FAFF);
+  static const Color background = Color(0xFFF6F6F6);
   static const Color surface = Color(0xFFFFFFFF);
-  static const Color surfaceVariant = Color(0xFFF0F4FF);
+  static const Color surfaceVariant = Color(0xFFF0F2F5);
+
+  // Chat wallpaper (WhatsApp-style beige)
+  static const Color chatBackground = Color(0xFFEFE7DE);
 
   // Text
   static const Color textPrimary = Color(0xFF1A1A2E);
@@ -35,11 +38,11 @@ class AppColors {
   static const Color warning = Color(0xFFF57F17);
   static const Color info = Color(0xFF0288D1);
 
-  // Chat specific
-  static const Color sentBubble = Color(0xFF1565C0);
-  static const Color receivedBubble = Color(0xFFF0F4FF);
-  static const Color sentBubbleText = Color(0xFFFFFFFF);
-  static const Color receivedBubbleText = Color(0xFF1A1A2E);
+  // Chat specific (WhatsApp-style bubbles)
+  static const Color sentBubble = Color(0xFFD9FDD3);
+  static const Color receivedBubble = Color(0xFFFFFFFF);
+  static const Color sentBubbleText = Color(0xFF111B21);
+  static const Color receivedBubbleText = Color(0xFF111B21);
 
   // Status indicators
   static const Color online = Color(0xFF4CAF50);

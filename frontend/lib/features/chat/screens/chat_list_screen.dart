@@ -45,17 +45,9 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> with SingleTick
       backgroundColor: AppColors.background,
       appBar: AppBar(
         toolbarHeight: 68,
-        title: const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text('Messages'),
-            SizedBox(height: 2),
-            Text(
-              'Stay close, across every language',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: AppColors.textSecondary),
-            ),
-          ],
+        title: const Text(
+          'UbumweConnect',
+          style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: AppColors.textOnPrimary, fontFamily: 'Poppins'),
         ),
         actions: [
           IconButton(
@@ -82,7 +74,7 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> with SingleTick
                   hintText: 'Search conversations',
                   filled: true,
                   fillColor: AppColors.surfaceVariant,
-                  prefixIcon: const Icon(Icons.search),
+                  prefixIcon: const Icon(Icons.search, color: AppColors.textSecondary),
                   suffixIcon: _searchQuery.isEmpty ? null : IconButton(
                     tooltip: 'Clear search', icon: const Icon(Icons.clear),
                     onPressed: () { _searchController.clear(); setState(() => _searchQuery = ''); },
@@ -105,9 +97,10 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> with SingleTick
             ),
             TabBar(
               controller: _tabController,
-              labelColor: AppColors.primary,
-              unselectedLabelColor: AppColors.textSecondary,
-              indicatorColor: AppColors.primary,
+              labelColor: AppColors.textOnPrimary,
+              unselectedLabelColor: Colors.white70,
+              indicatorColor: AppColors.textOnPrimary,
+              indicatorSize: TabBarIndicatorSize.tab,
               labelStyle: const TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w600, fontSize: 14),
               tabs: const [Tab(text: 'All'), Tab(text: 'Direct'), Tab(text: 'Groups')],
             ),

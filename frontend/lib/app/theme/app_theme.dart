@@ -20,14 +20,14 @@ class AppTheme {
       scaffoldBackgroundColor: AppColors.background,
       fontFamily: 'Poppins',
       appBarTheme: const AppBarTheme(
-        backgroundColor: AppColors.background,
-        foregroundColor: AppColors.textPrimary,
+        backgroundColor: AppColors.primary,
+        foregroundColor: AppColors.textOnPrimary,
         elevation: 0,
         scrolledUnderElevation: 0,
         centerTitle: false,
         titleTextStyle: TextStyle(
-          fontFamily: 'Poppins', fontSize: 20, fontWeight: FontWeight.w700,
-          color: AppColors.textPrimary,
+          fontFamily: 'Poppins', fontSize: 20, fontWeight: FontWeight.w600,
+          color: AppColors.textOnPrimary,
         ),
       ),
       navigationBarTheme: NavigationBarThemeData(
@@ -78,7 +78,7 @@ class AppTheme {
         ),
       ),
       floatingActionButtonTheme: FloatingActionButtonThemeData(
-        backgroundColor: AppColors.primary, foregroundColor: Colors.white,
+        backgroundColor: AppColors.primaryLight, foregroundColor: Colors.white,
         elevation: 3, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       ),
       dividerTheme: const DividerThemeData(color: AppColors.divider, thickness: 1, space: 1),

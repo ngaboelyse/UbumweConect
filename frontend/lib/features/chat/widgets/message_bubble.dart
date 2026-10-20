@@ -216,21 +216,21 @@ class _MessageBubbleState extends State<MessageBubble> {
                 child: Column(
                   crossAxisAlignment: widget.isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
                   children: [
-                    // Bubble
+                    // Bubble (WhatsApp style)
                     Container(
                       decoration: BoxDecoration(
                         color: widget.isMe ? AppColors.sentBubble : AppColors.receivedBubble,
                         borderRadius: BorderRadius.only(
-                          topLeft: const Radius.circular(18),
-                          topRight: const Radius.circular(18),
-                          bottomLeft: Radius.circular(widget.isMe ? 18 : 4),
-                          bottomRight: Radius.circular(widget.isMe ? 4 : 18),
+                          topLeft: const Radius.circular(8),
+                          topRight: const Radius.circular(8),
+                          bottomLeft: Radius.circular(widget.isMe ? 8 : 0),
+                          bottomRight: Radius.circular(widget.isMe ? 0 : 8),
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.06),
-                            blurRadius: 4,
-                            offset: const Offset(0, 2),
+                            color: Colors.black.withOpacity(0.08),
+                            blurRadius: 1,
+                            offset: const Offset(0, 1),
                           ),
                         ],
                       ),
@@ -242,14 +242,14 @@ class _MessageBubbleState extends State<MessageBubble> {
                             // Message content
                             if (widget.message.isText)
                               Text(
-                                content,
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  color: widget.isMe ? AppColors.sentBubbleText : AppColors.receivedBubbleText,
-                                  fontFamily: 'Poppins',
-                                  height: 1.4,
-                                ),
-                              )
+                                 content,
+                                 style: TextStyle(
+                                   fontSize: 15,
+                                   color: AppColors.receivedBubbleText,
+                                   fontFamily: 'Poppins',
+                                   height: 1.4,
+                                 ),
+                               )
                             else if (widget.message.isVoice)
                               _buildVoiceMessage()
                             else if (widget.message.isImage)
@@ -314,47 +314,47 @@ class _MessageBubbleState extends State<MessageBubble> {
                             Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Text(
-                                  _formatTime(widget.message.createdAt),
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: widget.isMe ? Colors.white60 : AppColors.textHint,
-                                    fontFamily: 'Poppins',
-                                  ),
-                                ),
-                                if (widget.isMe) ...[
-                                  const SizedBox(width: 4),
-                                  _buildStatusIcon(),
-                                ],
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                                                              Text(
+                                                                _formatTime(widget.message.createdAt),
+                                                                style: TextStyle(
+                                                                  fontSize: 11,
+                                                                  color: widget.isMe ? Colors.grey[700] : AppColors.textHint,
+                                                                  fontFamily: 'Poppins',
+                                                                ),
+                                                              ),
+                                                              if (widget.isMe) ...[
+                                                                const SizedBox(width: 4),
+                                                                _buildStatusIcon(),
+                                                              ],
+                                                            ],
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                  ),
 
-                    // Reactions row below the bubble
-                    _buildReactionsRow(),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+                                                  // Reactions row below the bubble
+                                                  _buildReactionsRow(),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                }
 
-  Widget _buildStatusIcon() {
-    switch (widget.message.status) {
-      case 'read':
-        return const Icon(Icons.done_all, size: 14, color: Colors.lightBlueAccent);
-      case 'delivered':
-        return const Icon(Icons.done_all, size: 14, color: Colors.white60);
-      default:
-        return const Icon(Icons.done, size: 14, color: Colors.white60);
-    }
-  }
+                                Widget _buildStatusIcon() {
+                                  switch (widget.message.status) {
+                                    case 'read':
+                                      return const Icon(Icons.done_all, size: 14, color: AppColors.primaryLight);
+                                    case 'delivered':
+                                      return const Icon(Icons.done_all, size: 14, color: AppColors.textHint);
+                                    default:
+                                      return const Icon(Icons.done, size: 14, color: AppColors.textHint);
+                                  }
+                                }
 
   Widget _buildVoiceMessage() {
     final msg = widget.message;

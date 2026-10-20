@@ -345,7 +345,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final preferredLanguage = currentUser?.preferredLanguage ?? 'english';
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF0F4FF),
+      backgroundColor: AppColors.chatBackground,
       appBar: _buildAppBar(typingUsers),
       body: Column(
         children: [
@@ -485,10 +485,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               children: [
                 Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, fontFamily: 'Poppins')),
                 Text(
-                  typingUsers.isNotEmpty ? 'typing...' : (isOnline ? 'Online' : 'Offline'),
+                  typingUsers.isNotEmpty ? 'typing...' : (isOnline ? 'online' : 'last seen recently'),
                   style: TextStyle(
                     fontSize: 12,
-                    color: typingUsers.isNotEmpty ? AppColors.primary : (isOnline ? AppColors.online : AppColors.textHint),
+                    color: Colors.white70,
                     fontFamily: 'Poppins',
                   ),
                 ),
@@ -522,7 +522,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 color: AppColors.primary.withOpacity(0.05),
                 child: Row(
                   children: [
-                    Container(width: 3, height: 36, color: AppColors.primary),
+                    Container(width: 3, height: 36, color: AppColors.primaryLight),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Column(
@@ -557,9 +557,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     child: Container(
                       constraints: const BoxConstraints(maxHeight: 120),
                       decoration: BoxDecoration(
-                        color: AppColors.background,
+                        color: AppColors.surface,
                         borderRadius: BorderRadius.circular(24),
-                        border: Border.all(color: AppColors.divider),
                       ),
                       child: TextField(
                         controller: _messageController,
